@@ -3,7 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.32002.185
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DSPNewGameX", "DSPNewGameX\DSPNewGameX.csproj", "{051DB759-BD32-46C2-8DA1-6D2DE55D8EC9}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SmartTankS", "DspSmartTank\SmartTankS.csproj", "{191989E6-7DE8-4006-8389-470FE64BC353}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DSPNewGamePlus", "DSPNewGamePlus\DSPNewGamePlus.csproj", "{62E3D657-2FB4-40CF-AE89-513C1A583438}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,10 +13,14 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{051DB759-BD32-46C2-8DA1-6D2DE55D8EC9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{051DB759-BD32-46C2-8DA1-6D2DE55D8EC9}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{051DB759-BD32-46C2-8DA1-6D2DE55D8EC9}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{051DB759-BD32-46C2-8DA1-6D2DE55D8EC9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{191989E6-7DE8-4006-8389-470FE64BC353}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{191989E6-7DE8-4006-8389-470FE64BC353}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{191989E6-7DE8-4006-8389-470FE64BC353}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{191989E6-7DE8-4006-8389-470FE64BC353}.Release|Any CPU.Build.0 = Release|Any CPU
+		{62E3D657-2FB4-40CF-AE89-513C1A583438}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{62E3D657-2FB4-40CF-AE89-513C1A583438}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{62E3D657-2FB4-40CF-AE89-513C1A583438}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{62E3D657-2FB4-40CF-AE89-513C1A583438}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
