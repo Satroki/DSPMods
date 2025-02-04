@@ -14,110 +14,59 @@ using BepInEx.Logging;
 using HarmonyLib;
 using System.Reflection;
 using System.Security;
-using System.Security.Permissions;
-
+using Newtonsoft.Json;
 
 [module: UnverifiableCode]
-[assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
 
 namespace DSPNewGamePlus
 {
-
     [BepInPlugin("Appun.DSP.plugin.NewGamePlus", "DSPNewGamePlus", "1.1.3")]
     [BepInProcess("DSPGAME.exe")]
 
     public class Main : BaseUnityPlugin
     {
-        public static ConfigEntry<KeyCode> openKey;
-        //public static ConfigEntry<KeyCode> KeyConfig2;
-        public static string PluginPath = System.IO.Path.GetDirectoryName(
-                   System.Reflection.Assembly.GetExecutingAssembly().Location);
+        public static string PluginPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        public static KeyboardShortcut Hotkey;
 
         public void Start()
         {
+            Hotkey = new KeyboardShortcut(KeyCode.Alpha5, KeyCode.LeftAlt);
+
             Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly());
-
             LogManager.Logger = Logger;
-
-            UI.Create();
-
         }
 
-
-        //
-        public static void Save()　　//SaveCurrentGame(string saveName)
+        public static void Save()
         {
             LogManager.Logger.LogInfo("save");
-            string path = Path.Combine(PluginPath, "DSPNewGamePlus.save");
-            FileStream fileStream = new FileStream(path, FileMode.Create);
-            BinaryWriter binaryWriter = new BinaryWriter(fileStream);
+            string path = Path.Combine(PluginPath, "DSPNewGamePlus.json");
+            var save = new SaveModel { History = new History() };
+            HistoryData.Export(save.History);
 
-            //インベントリ
-            PlayerData.Export(binaryWriter);
-            //ヒストリ
-            HistoryData.Export(binaryWriter);
-            //メカ
-            MechaData.Export(binaryWriter);
+            File.WriteAllText(path, JsonConvert.SerializeObject(save));
 
-            //TempExport(binaryWriter);
-
-            binaryWriter.Close();
-            fileStream.Close();
             UI.openedMessageBox = false;
-
-        }
-
-        public static void TempExport(BinaryWriter w)
-        {
-            var history = GameMain.history;
-            w.Write(history.dispenserDeliveryMaxAngle);
-            w.Write(history.logisticCourierSpeed);
-            w.Write(history.logisticCourierSpeedScale);
-            w.Write(history.logisticCourierCarries);
-
-            GameMain.mainPlayer.deliveryPackage.Export(w);
-        }
-
-        public static void TempImport(BinaryReader r)
-        {
-            var history = GameMain.history;
-            history.dispenserDeliveryMaxAngle = r.ReadSingle();
-            history.logisticCourierSpeed = r.ReadSingle();
-            history.logisticCourierSpeedScale = r.ReadSingle();
-            history.logisticCourierCarries = r.ReadInt32();
-            GameMain.mainPlayer.deliveryPackage.Import(r);
         }
 
         public static void Load()
         {
-            //読み込み
             var Data = GameMain.data;
             LogManager.Logger.LogInfo("load");
-            string path = Path.Combine(PluginPath, "DSPNewGamePlus.save");
+            string path = Path.Combine(PluginPath, "DSPNewGamePlus.json");
             if (!File.Exists(path))
             {
-                LogManager.Logger.LogInfo("DSPNewGamePlus.save not found " + path);
+                LogManager.Logger.LogInfo("DSPNewGamePlus.json not found " + path);
                 UI.openedMessageBox = false;
 
                 return;
             }
-            FileStream fileStream = new FileStream(path, FileMode.Open);
+            var save = File.ReadAllText(path);
+            var saveModel = JsonConvert.DeserializeObject<SaveModel>(save);
 
-            BinaryReader BinaryReader = new BinaryReader(fileStream);
             Data.history.techStates.Clear();
-
-            //インベントリ
-            PlayerData.Import(BinaryReader);
-            //ヒストリ
-            HistoryData.Import(BinaryReader);
-            //メカ
-            MechaData.Import(BinaryReader);
-
-            //TempImport(BinaryReader);
-
-            BinaryReader.Close();
-            fileStream.Close();
-
+           
+            HistoryData.Import(saveModel.History);
+         
             UI.openedMessageBox = false;
         }
 
@@ -131,50 +80,17 @@ namespace DSPNewGamePlus
                     UI.messageBox.FadeOut();
                 }
             }
-            //if (Input.GetKeyDown(KeyCode.F1))
-            //{
-
-            //    var writer = new System.IO.StreamWriter("test.txt");
-            //    foreach (KeyValuePair<int, TechState> keyValuePair2 in GameMain.history.techStates)
-            //    {
-            //        //w.Write(keyValuePair2.Key);
-            //        //w.Write(keyValuePair2.Value.unlocked);
-            //        //w.Write(keyValuePair2.Value.curLevel);
-            //        //w.Write(keyValuePair2.Value.maxLevel);
-            //        //w.Write(keyValuePair2.Value.hashUploaded);
-            //        //w.Write(keyValuePair2.Value.hashNeeded);
-
-            //        TechProto techProto = LDB.techs.Select(keyValuePair2.Key);
-            //        //if (techProto != null)
-            //        //{
-
-            //        //    LogManager.Logger.LogInfo($"  Name[{techProto.Name.Translate()}]    Key[{keyValuePair2.Key}]  unlocked[{keyValuePair2.Value.unlocked}]  ");
-            //        //    writer.WriteLine(techProto.Name.Translate() + "," + keyValuePair2.Key + "," + keyValuePair2.Value.unlocked + "," + keyValuePair2.Value.curLevel + "," + keyValuePair2.Value.maxLevel + "," + keyValuePair2.Value.hashUploaded + "," + keyValuePair2.Value.hashNeeded);
-            //        //}
-            //        //else
-            //        //{
-            //        LogManager.Logger.LogInfo($" Key[{keyValuePair2.Key}]  unlocked[{keyValuePair2.Value.unlocked}]  ");
-            //        writer.WriteLine(keyValuePair2.Key + "," + keyValuePair2.Value.unlocked + "," + keyValuePair2.Value.curLevel + "," + keyValuePair2.Value.maxLevel + "," + keyValuePair2.Value.hashUploaded + "," + keyValuePair2.Value.hashNeeded);
-
-            //        //}
-            //    }
-            //    writer.Close();
-
-            //}
-
-
-
+            else if (Hotkey.IsDown())
+            {
+                UI.OnClicknewGamePlusButton();
+            }
         }
-
 
         public static void Cancel()
         {
             UI.openedMessageBox = false;
         }
-
-
     }
-
 
     public class LogManager
     {

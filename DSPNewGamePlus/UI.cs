@@ -15,6 +15,7 @@ using HarmonyLib;
 using System.Reflection;
 using System.Security;
 using System.Security.Permissions;
+using System.Globalization;
 
 namespace DSPNewGamePlus
 {
@@ -42,56 +43,37 @@ namespace DSPNewGamePlus
         public static bool InventoryEnable = true;
         public static bool TechnologiesEnable = true;
         public static bool UpgradesEnable = true;
-
+        public static KeyboardShortcut Hotkey;
         public static void Create()
         {
-
-            //ボタンの作成
-            newGamePlusButton = Instantiate(GameObject.Find("UI Root/Overlay Canvas/In Game/Esc Menu/button (6)"), GameObject.Find("UI Root/Overlay Canvas/In Game/Esc Menu").transform) as GameObject;
-            newGamePlusButton.transform.localPosition = new Vector3(0, -325, 0);
-            newGamePlusButton.GetComponentInChildren<Text>().text = "NewGame+".Translate();
-            Destroy(newGamePlusButton.transform.Find("Text").GetComponent<Localizer>());
-            Destroy(newGamePlusButton.GetComponent<UIButton>());
-            newGamePlusButton.GetComponent<Image>().color = new Color(0.4f, 0.8f, 1, 1);
-
-
-            newGamePlusButton.SetActive(true);
-
-            //ボタンクリックイベントの追加
-            newGamePlusButton.GetComponent<Button>().onClick.AddListener(OnClicknewGamePlusButton);
-
-
-            iconSprite = Resources.Load<Sprite>("Icons/Tech/1");
-
-
         }
 
         public static void OnClicknewGamePlusButton()
         {
 
-        MilestoneEnable = true;
-        TutorialEnable = true;
-        FuelChamberEnable = true;
-        InventoryEnable = true;
-        TechnologiesEnable = true;
-        UpgradesEnable = true;
+            MilestoneEnable = true;
+            TutorialEnable = true;
+            FuelChamberEnable = true;
+            InventoryEnable = true;
+            TechnologiesEnable = true;
+            UpgradesEnable = true;
 
 
-        openedMessageBox = true;
+            openedMessageBox = true;
             var Data = GameMain.data;
 
 
-            string path = Path.Combine(Main.PluginPath, "DSPNewGamePlus.save");
+            string path = Path.Combine(Main.PluginPath, "DSPNewGamePlus.json");
             LogManager.Logger.LogInfo("path : " + path);
 
             if (File.Exists(path))
             {
                 messageBox = UIMessageBox.Show(
-                    "NewGame+".Translate(),
-                    "You can save and load Mecha,Techs,Resipes and items stored in your inventory.".Translate(),
-                    "Cancel".Translate(),
-                    "Load".Translate(),
-                    "Save".Translate(),
+                    "NewGame+",
+                    "You can save and load Mecha,Techs,Resipes and items stored in your inventory.",
+                    "Cancel",
+                    "Load",
+                    "Save",
                     0,
                     new UIMessageBox.Response(Main.Cancel),
                     new UIMessageBox.Response(Main.Load),
@@ -101,10 +83,10 @@ namespace DSPNewGamePlus
             else
             {
                 messageBox = UIMessageBox.Show(
-                    "NewGame+".Translate(),
-                    "You can save and load Mecha,Techs,Resipes and items stored in your inventory.".Translate(),
-                    "Cancel".Translate(),
-                    "Save".Translate(),
+                    "NewGame+",
+                    "You can save and load Mecha,Techs,Resipes and items stored in your inventory.",
+                    "Cancel",
+                    "Save",
                     0,
                     new UIMessageBox.Response(Main.Cancel),
                     new UIMessageBox.Response(Main.Save)
@@ -120,12 +102,12 @@ namespace DSPNewGamePlus
             checkBoxTitle = Instantiate(GameObject.Find("UI Root/Overlay Canvas/DialogGroup/MessageBox VE(Clone)/Window/Body/Client/Text"), messageBox.gameObject.transform.Find("Window/Body")) as GameObject;
             checkBoxTitle.transform.localPosition = new Vector3(-170, 115, 0);
             checkBoxTitle.GetComponent<RectTransform>().sizeDelta = new Vector2(180, 80);
-            checkBoxTitle.GetComponent<Text>().text = "Load Option".Translate();
+            checkBoxTitle.GetComponent<Text>().text = "Load Option";
             checkBoxTitle.GetComponent<Text>().alignment = TextAnchor.MiddleRight;
 
             checkBox1 = Instantiate(GameObject.Find("UI Root/Overlay Canvas/In Game/Function Panel/Build Menu/ux-group/checkbox-facilities"), messageBox.gameObject.transform.Find("Window/Body")) as GameObject;
             checkBox1.transform.localPosition = new Vector3(30, 90, 0);
-            checkBox1.transform.Find("text").GetComponent<Text>().text = "Milestone".Translate();
+            checkBox1.transform.Find("text").GetComponent<Text>().text = "Milestone";
             checkBox1.transform.Find("text").GetComponent<Text>().fontSize = 16;
             Destroy(checkBox1.transform.Find("text").GetComponent<Localizer>());
             checkBox1.transform.Find("checked").GetComponent<Image>().enabled = true;
@@ -134,28 +116,28 @@ namespace DSPNewGamePlus
 
             checkBox2 = Instantiate(checkBox1.gameObject, checkBox1.transform.parent) as GameObject;
             checkBox2.transform.localPosition = new Vector3(30, 75, 0);
-            checkBox2.transform.Find("text").GetComponent<Text>().text = "Tutorial".Translate();
+            checkBox2.transform.Find("text").GetComponent<Text>().text = "Tutorial";
 
             checkBox3 = Instantiate(checkBox1.gameObject, checkBox1.transform.parent) as GameObject;
             checkBox3.transform.localPosition = new Vector3(30, 45, 0);
-            checkBox3.transform.Find("text").GetComponent<Text>().text = "FuelChamber&WarperSlot".Translate();
+            checkBox3.transform.Find("text").GetComponent<Text>().text = "FuelChamber&WarperSlot";
 
             checkBox4 = Instantiate(checkBox1.gameObject, checkBox1.transform.parent) as GameObject;
             checkBox4.transform.localPosition = new Vector3(30, 15, 0);
-            checkBox4.transform.Find("text").GetComponent<Text>().text = "Inventory&SoilPile".Translate();
+            checkBox4.transform.Find("text").GetComponent<Text>().text = "Inventory&SoilPile";
 
             checkBox5 = Instantiate(checkBox1.gameObject, checkBox1.transform.parent) as GameObject;
             checkBox5.transform.localPosition = new Vector3(30, -15, 0);
-            checkBox5.transform.Find("text").GetComponent<Text>().text = "Technologies&Recipes".Translate();
+            checkBox5.transform.Find("text").GetComponent<Text>().text = "Technologies&Recipes";
 
             checkBox6 = Instantiate(checkBox1.gameObject, checkBox1.transform.parent) as GameObject;
             checkBox6.transform.localPosition = new Vector3(30, -45, 0);
-            checkBox6.transform.Find("text").GetComponent<Text>().text = "Upgrades&MechaPerformance".Translate();
+            checkBox6.transform.Find("text").GetComponent<Text>().text = "Upgrades&MechaPerformance";
 
             CautionText = Instantiate(checkBoxTitle.gameObject, checkBoxTitle.transform.parent) as GameObject;
             CautionText.transform.localPosition = new Vector3(-170, -80, 0);
             CautionText.GetComponent<RectTransform>().sizeDelta = new Vector2(420, 80);
-            CautionText.GetComponent<Text>().text = "Loading only one of  [Technologies&Recipes] or [Upgrades&MechaPerformance] will inconsistent and affect achievements until the requested research is unlocked.".Translate();
+            CautionText.GetComponent<Text>().text = "Loading only one of  [Technologies&Recipes] or [Upgrades&MechaPerformance] will inconsistent and affect achievements until the requested research is unlocked.";
             CautionText.GetComponent<Text>().color = new Color(1f, 0.7f, 0f, 0.7f);
             CautionText.GetComponent<Text>().alignment = TextAnchor.MiddleLeft;
 
