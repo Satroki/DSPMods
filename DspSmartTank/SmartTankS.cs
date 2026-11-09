@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using HarmonyLib;
 using System.Runtime.CompilerServices;
 
@@ -42,36 +42,34 @@ namespace SmartTankS
             }
 
             CargoTraffic cargoTraffic = factory.cargoTraffic;
-            var tankPool = factory.factoryStorage.tankPool;
+            TankComponent[] tankPool = factory.factoryStorage.tankPool;
+            int tmpTankId = __instance.inputSwitch ? __instance.id : 0;
 
-            var belt = __instance.belt0;
-            if (belt > 0)
+            if (__instance.belt0 > 0)
             {
-                TankComponentUpdateBelt(ref __instance, belt, __instance.isOutput0, ref cargoTraffic, ref tankPool);
+                TankComponentUpdateBelt(ref __instance, cargoTraffic, tankPool, ref tmpTankId, __instance.belt0, __instance.isOutput0);
             }
 
-            belt = __instance.belt1;
-            if (belt > 0)
+            if (__instance.belt1 > 0)
             {
-                TankComponentUpdateBelt(ref __instance, belt, __instance.isOutput1, ref cargoTraffic, ref tankPool);
+                TankComponentUpdateBelt(ref __instance, cargoTraffic, tankPool, ref tmpTankId, __instance.belt1, __instance.isOutput1);
             }
 
-            belt = __instance.belt2;
-            if (belt > 0)
+            if (__instance.belt2 > 0)
             {
-                TankComponentUpdateBelt(ref __instance, belt, __instance.isOutput2, ref cargoTraffic, ref tankPool);
+                TankComponentUpdateBelt(ref __instance, cargoTraffic, tankPool, ref tmpTankId, __instance.belt2, __instance.isOutput2);
             }
 
-            belt = __instance.belt3;
-            if (belt > 0)
+            if (__instance.belt3 > 0)
             {
-                TankComponentUpdateBelt(ref __instance, belt, __instance.isOutput3, ref cargoTraffic, ref tankPool);
+                TankComponentUpdateBelt(ref __instance, cargoTraffic, tankPool, ref tmpTankId, __instance.belt3, __instance.isOutput3);
             }
+
             return false;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void TankComponentUpdateBelt(ref TankComponent thisTank, int belt, bool isOutput, ref CargoTraffic cargoTraffic, ref TankComponent[] tankPool)
+        private static void TankComponentUpdateBelt(ref TankComponent thisTank, CargoTraffic cargoTraffic, TankComponent[] tankPool, ref int tmpTankId, int belt, bool isOutput)
         {
             if (isOutput && thisTank.outputSwitch)
             {
@@ -96,11 +94,8 @@ namespace SmartTankS
                         thisTank.fluidCount += stack;
                         thisTank.fluidInc += inc;
                     }
-                    else if (thisTank.fluidCount >= thisTank.fluidCapacity && IsSpecialFluid(thisTank.fluidId) && thisTank.nextTankId <= 0)
-                    {
-                        cargoTraffic.TryPickItemAtRear(belt, thisTank.fluidId, null, out _, out _);
-                    }
                 }
+
                 if (thisTank.fluidId == 0)
                 {
                     int num2 = cargoTraffic.TryPickItemAtRear(belt, 0, ItemProto.fluids, out stack, out inc);
@@ -112,62 +107,52 @@ namespace SmartTankS
                     }
                 }
 
-                if (thisTank.fluidCount >= thisTank.fluidCapacity && cargoTraffic.GetItemIdAtRear(belt) == thisTank.fluidId && thisTank.nextTankId > 0)
+                if (thisTank.fluidCount >= thisTank.fluidCapacity && cargoTraffic.GetItemIdAtRear(belt) == thisTank.fluidId)
                 {
-                    TankComponent tankComponent = tankPool[thisTank.nextTankId];
-                    TankComponent tankComponent2 = tankComponent;
-                    while (tankComponent.fluidCount >= tankComponent.fluidCapacity)
+                    // mod 功能：链式输送一点都送不进去时，特殊流体直接吞掉，避免皮带堵死
+                    bool moved = TryPickItem(ref thisTank, tankPool, cargoTraffic, ref tmpTankId, belt);
+                    if (!moved && IsSpecialFluid(thisTank.fluidId))
                     {
-                        TankComponent tankComponent3 = tankPool[tankComponent2.lastTankId];
-                        if (tankComponent.fluidId != tankComponent3.fluidId)
-                        {
-                            tankComponent2 = tankComponent3;
-                            break;
-                        }
-
-                        if (tankComponent.inputSwitch)
-                        {
-                            if (tankComponent.nextTankId > 0)
-                            {
-                                tankComponent = tankPool[tankComponent.nextTankId];
-                                tankComponent2 = tankComponent;
-                                continue;
-                            }
-
-                            tankComponent2.id = thisTank.id;
-                            break;
-                        }
-
-                        tankComponent2 = tankPool[tankComponent2.lastTankId];
-                        break;
-                    }
-
-                    TankComponent tankComponent4 = tankPool[tankComponent2.lastTankId];
-                    if (!tankComponent2.inputSwitch || (tankComponent2.fluidId != tankComponent4.fluidId && tankComponent2.fluidId != 0))
-                    {
-                        tankComponent2 = tankComponent4;
-                    }
-
-                    bool flag = true;
-                    if (((tankComponent2.id == thisTank.id || tankComponent2.fluidCount >= tankComponent2.fluidCapacity) && !IsSpecialFluid(thisTank.fluidId)) || !tankComponent4.outputSwitch)
-                    {
-                        flag = false;
-                    }
-
-                    if (flag && cargoTraffic.TryPickItemAtRear(belt, thisTank.fluidId, null, out stack, out inc) > 0)
-                    {
-                        if (tankPool[tankComponent2.id].fluidCount == 0)
-                        {
-                            tankPool[tankComponent2.id].fluidId = thisTank.fluidId;
-                        }
-                        if (tankPool[tankComponent2.id].fluidCount < tankPool[tankComponent2.id].fluidCapacity)
-                        {
-                            tankPool[tankComponent2.id].fluidCount += stack;
-                            tankPool[tankComponent2.id].fluidInc += inc;
-                        }
+                        cargoTraffic.TryPickItemAtRear(belt, thisTank.fluidId, null, out _, out _);
                     }
                 }
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool TryPickItem(ref TankComponent thisTank, TankComponent[] tankPool, CargoTraffic cargoTraffic, ref int tmpTankId, int belt)
+        {
+            bool moved = false;
+            int num = 20;
+            while (tmpTankId > 0 && --num > 0)
+            {
+                ref TankComponent tank = ref tankPool[tmpTankId];
+                if ((tank.fluidId != 0 && tank.fluidId != thisTank.fluidId) || !tank.inputSwitch)
+                {
+                    tmpTankId = 0;
+                    break;
+                }
+
+                byte stack;
+                byte inc;
+                if (tank.fluidCount >= tank.fluidCapacity)
+                {
+                    tmpTankId = tank.nextTankId;
+                }
+                else if (cargoTraffic.TryPickItemAtRear(belt, thisTank.fluidId, null, out stack, out inc) > 0)
+                {
+                    if (tank.fluidCount == 0)
+                    {
+                        tank.fluidId = thisTank.fluidId;
+                    }
+
+                    tank.fluidCount += stack;
+                    tank.fluidInc += inc;
+                    moved = true;
+                }
+            }
+
+            return moved;
         }
     }
 }

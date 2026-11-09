@@ -1,31 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>netstandard2.1</TargetFramework>
 	<LangVersion>9.0</LangVersion>
+    <DeployPluginDir Condition="'$(DeployPluginDir)' == ''">C:\Users\xyl29\AppData\Roaming\r2modmanPlus-local\DysonSphereProgram\profiles\Default\BepInEx\plugins\Satroki-SmartTankS</DeployPluginDir>
   </PropertyGroup>
+  <Import Project="..\DSPMods.Shared\DSPMods.Shared.props" />
   <ItemGroup>
-    <Reference Include="0Harmony">
-      <HintPath>..\..\BepInEx_x64_5.4.22.0\BepInEx\core\0Harmony.dll</HintPath>
-    </Reference>
-    <Reference Include="Assembly-CSharp">
-      <HintPath>..\..\..\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program\DSPGAME_Data\Managed\Assembly-CSharp.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx">
-      <HintPath>..\..\BepInEx_x64_5.4.22.0\BepInEx\core\BepInEx.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx.Harmony">
-      <HintPath>..\..\BepInEx_x64_5.4.22.0\BepInEx\core\BepInEx.Harmony.dll</HintPath>
-    </Reference>
-    <Reference Include="BepInEx.Preloader">
-      <HintPath>..\..\BepInEx_x64_5.4.22.0\BepInEx\core\BepInEx.Preloader.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine">
-      <HintPath>..\..\..\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program\DSPGAME_Data\Managed\UnityEngine.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\..\..\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program\DSPGAME_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
-    </Reference>
+
   </ItemGroup>
 
   <ItemGroup>
@@ -33,5 +15,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Target Name="DeployToProfile" AfterTargets="Build" Condition="'$(DeployPluginDir)' != ''">
+    <MakeDir Directories="$(DeployPluginDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+  </Target>
 
 </Project>

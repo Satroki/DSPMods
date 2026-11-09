@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>netstandard2.1</TargetFramework>
+		<LangVersion>9.0</LangVersion>
+		<Nullable>disable</Nullable>
+		<AssemblyName>AutoPlaceMiner</AssemblyName>
+		<RootNamespace>AutoPlaceMiner</RootNamespace>
+		<DeployPluginDir Condition="'$(DeployPluginDir)' == ''">C:\Users\xyl29\AppData\Roaming\r2modmanPlus-local\DysonSphereProgram\profiles\Default\BepInEx\plugins\AutoPlaceMiner</DeployPluginDir>
+	</PropertyGroup>
+
+	<Import Project="..\DSPMods.Shared\DSPMods.Shared.props" />
+
+	<ItemGroup>
+		<None Update="manifest.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+	<Target Name="DeployToProfile" AfterTargets="Build" Condition="'$(DeployPluginDir)' != ''">
+		<MakeDir Directories="$(DeployPluginDir)" />
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+		<Copy SourceFiles="manifest.json" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('manifest.json')" />
+	</Target>
+
+</Project>

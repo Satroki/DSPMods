@@ -1,0 +1,9 @@
+{
+  "name": "DSPMultiplyStackSize",
+  "version_number": "1.0.13",
+  "website_url": "https://github.com/appuns/DSPMultiplyStackSize",
+  "description": "Allow you to multiply stack sizes of all items. This work with also modded items. You can change the stack size individually. This affect achievements or milestones. アイテムのスタック数を変更するMODです。MODで追加されたアイテムのスタック数も変更できます。スタック数を個別に変更することできます。実績やマイルストーンに影響します。",
+  "dependencies": [
+    "xiaoye97-BepInEx-5.4.17"
+  ]
+}

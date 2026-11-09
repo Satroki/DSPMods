@@ -1,0 +1,9 @@
+{
+  "name": "AutoPlaceMiner",
+  "version_number": "1.2.1",
+  "website_url": "",
+  "description": "在建造大型采矿机时按 Q，自动选择覆盖当前矿脉群最多且无碰撞的角度并放置。",
+  "dependencies": [
+    "xiaoye97-BepInEx-5.4.17"
+  ]
+}
