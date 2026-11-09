@@ -6,14 +6,23 @@
 		<Nullable>disable</Nullable>
 		<AssemblyName>AutoPlaceMiner</AssemblyName>
 		<RootNamespace>AutoPlaceMiner</RootNamespace>
-		<DeployPluginDir Condition="'$(DeployPluginDir)' == ''">C:\Users\xyl29\AppData\Roaming\r2modmanPlus-local\DysonSphereProgram\profiles\Default\BepInEx\plugins\AutoPlaceMiner</DeployPluginDir>
+		<DeployPluginDir Condition="'$(DeployPluginDir)' == ''">C:\Users\xyl29\AppData\Roaming\r2modmanPlus-local\DysonSphereProgram\profiles\Default\BepInEx\plugins\Satroki-AutoPlaceMiner</DeployPluginDir>
 	</PropertyGroup>
 
 	<Import Project="..\DSPMods.Shared\DSPMods.Shared.props" />
 
 	<ItemGroup>
+		<None Update="DEVELOPMENT.md">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="icon.png">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<None Update="manifest.json">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="README.md">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
 
@@ -22,6 +31,8 @@
 		<Copy SourceFiles="$(TargetPath)" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" />
 		<Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
 		<Copy SourceFiles="manifest.json" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('manifest.json')" />
+		<Copy SourceFiles="README.md" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('README.md')" />
+		<Copy SourceFiles="icon.png" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('icon.png')" />
 	</Target>
 
 </Project>

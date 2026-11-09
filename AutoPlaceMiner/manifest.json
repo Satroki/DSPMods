@@ -1,8 +1,8 @@
 {
   "name": "AutoPlaceMiner",
-  "version_number": "1.2.1",
-  "website_url": "",
-  "description": "在建造大型采矿机时按 Q，自动选择覆盖当前矿脉群最多且无碰撞的角度并放置。",
+  "version_number": "1.0.0",
+  "website_url": "https://github.com/Satroki/DSPMods/tree/master/AutoPlaceMiner",
+  "description": "按 Q 自动为大型采矿机寻找最佳位置与角度，最大化矿脉覆盖。Press Q to auto-place the Advanced Mining Machine at the best position and angle for maximum vein coverage.",
   "dependencies": [
     "xiaoye97-BepInEx-5.4.17"
   ]

@@ -29,7 +29,7 @@ namespace AutoPlaceMiner
                 "General",
                 "Hotkey",
                 KeyCode.Q,
-                "按下此键时，在建造大型采矿机的预览位置自动选择覆盖矿脉最多的角度并放置。");
+                "按下此键时，自动搜索大型采矿机覆盖矿脉最多的位置和角度并放置。");
             SuppressCameraRoll = Config.Bind(
                 "General",
                 "SuppressCameraRoll",
