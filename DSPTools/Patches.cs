@@ -8,7 +8,7 @@ using System.Reflection.Emit;
 using System.Linq;
 
 
-namespace SmartTankS
+namespace DSPTools
 {
     [HarmonyPatch(typeof(Player), "SetSandCount")]
     public class SandPatch

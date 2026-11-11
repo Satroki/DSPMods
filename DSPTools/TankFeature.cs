@@ -1,35 +1,22 @@
-using BepInEx;
-using HarmonyLib;
 using System.Runtime.CompilerServices;
+using HarmonyLib;
 
-namespace SmartTankS
+namespace DSPTools
 {
-    [BepInPlugin("Satroki.DSP.plugin.SmartTankS", "SmartTankS", "1.0.0")]
-    [BepInProcess("DSPGAME.exe")]
-    public class SmartTankS : BaseUnityPlugin
+    /// <summary>
+    /// 储罐功能：整段替换 TankComponent.GameTick，实现储罐之间的链式输送，
+    /// 并在输送堵死时吞掉特殊流体，避免皮带堵住。
+    ///
+    /// 由 LoadConfig.EnableTank 控制是否注册；关闭时不打补丁，完全走原版逻辑。
+    /// 该功能不依赖本模组的其它模块，可以单独搬到独立项目里。
+    /// </summary>
+    [HarmonyPatch(typeof(TankComponent), "GameTick")]
+    internal static class TankGameTickPatch
     {
-        public void Start()
-        {
-            LoadConfig.Init(Config);
+        internal const string HarmonyId = "Satroki.DSP.plugin.DSPTools.tank";
 
-            Harmony.CreateAndPatchAll(typeof(SmartTankS));
-            if (LoadConfig.InfiniteSank.Value)
-                Harmony.CreateAndPatchAll(typeof(SandPatch));
-            if (LoadConfig.FreeStuff.Value)
-                Harmony.CreateAndPatchAll(typeof(CargoTrafficPatch));
-            if (LoadConfig.FreeBuyTech.Value)
-                Harmony.CreateAndPatchAll(typeof(GameHistoryDataPatch));
-        }
-
-
-        static bool IsSpecialFluid(int id)
-        {
-            return id == 1120 || id == 1114;
-        }
-
-        [HarmonyPrefix()]
-        [HarmonyPatch(typeof(TankComponent), "GameTick")]
-        public static bool TankGameTickPatch(ref TankComponent __instance, PlanetFactory factory)
+        [HarmonyPrefix]
+        private static bool Prefix(ref TankComponent __instance, PlanetFactory factory)
         {
             if (__instance.fluidInc < 0)
             {
@@ -153,6 +140,11 @@ namespace SmartTankS
             }
 
             return moved;
+        }
+
+        private static bool IsSpecialFluid(int id)
+        {
+            return id == 1120 || id == 1114;
         }
     }
 }
