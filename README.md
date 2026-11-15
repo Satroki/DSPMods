@@ -6,7 +6,8 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| [AutoPlaceMiner](AutoPlaceMiner/) | 建造大型采矿机时按 `Q`，自动搜索最佳位置与角度并放置，最大化矿脉覆盖。 |
+| [AutoConnectPower](AutoConnectPower/) | 按 `Alt+C` 一键连接本星球电网：扫描已建成/虚影的发电与用电设备，用最少的电力感应塔/无线输电塔把孤立电网和无供电设备连接起来；默认生成虚影，水面/熔岩塔自动铺地基。完全由 AI 开发，可自行调整。 |
+| [AutoPlaceMiner](AutoPlaceMiner/) | 建造大型采矿机时按 `Q`，自动搜索最佳位置与角度并放置，最大化矿脉覆盖，支持水中矿脉自动地基。 |
 | [DSPMultiplyStackSize](DSPMultiplyStackSize/) | 修改全部物品的堆叠数量，支持逐物品编辑。 |
 | [DSPTools](DSPTools/) | 储罐链式输送、装 mod 解锁成就、自定义分辨率等工具，各功能均可在配置文件里开关。 |
 | [DSPMods.Shared](DSPMods.Shared/) | 共享构建配置与游戏程序集引用，不单独发布。 |
@@ -45,6 +46,7 @@ pwsh -File .\decompile.ps1 -Force
 
 ```text
 DSPMods/
+├─ AutoConnectPower/       一键自动连接电网
 ├─ AutoPlaceMiner/         大型采矿机自动摆放
 ├─ DSPMultiplyStackSize/   堆叠数量编辑
 ├─ DSPTools/               储罐、成就解锁、自定义分辨率
