@@ -13,11 +13,12 @@ namespace AutoPlaceMiner
     {
         public const string PluginGuid = "Satroki.dsp.AutoPlaceMiner";
         public const string PluginName = "AutoPlaceMiner";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<KeyCode> Hotkey;
         internal static ConfigEntry<bool> SuppressCameraRoll;
+        internal static ConfigEntry<bool> AutoFoundation;
         internal static ConfigEntry<bool> ShowResult;
 
         private Harmony _harmony;
@@ -35,6 +36,11 @@ namespace AutoPlaceMiner
                 "SuppressCameraRoll",
                 true,
                 "手持大型采矿机时，拦截 Q 的相机横滚功能，避免自动摆放时相机同时滚动。");
+            AutoFoundation = Config.Bind(
+                "General",
+                "AutoFoundation",
+                true,
+                "水中矿脉自动铺地基。仅在没有更好的陆地位置时，为大型采矿机落点铺设地基，消耗地基物品和沙土；默认开启。");
             ShowResult = Config.Bind(
                 "General",
                 "ShowResult",

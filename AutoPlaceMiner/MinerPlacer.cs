@@ -111,6 +111,7 @@ namespace AutoPlaceMiner
                 return;
             }
 
+            var autoFoundation = AutoPlaceMinerPlugin.AutoFoundation?.Value ?? true;
             if (!FindTargetGroup(factory, position, planet.realRadius,
                     out var group, out var type, out var groupCenter, out var groupRadius, out var groupVeinCount))
             {
@@ -123,7 +124,8 @@ namespace AutoPlaceMiner
             var quick = BuildQuickCandidates(factory, planet, player, group, type, groupCenter, groupRadius,
                 groupVeinCount, position, click.yaw);
             if (quick.Count > 0 && Place(player, planet, factory, physics, click, item, desc, quick,
-                    groupCenter, groupRadius, groupVeinCount, reportFailure: false))
+                    groupCenter, groupRadius, groupVeinCount,
+                    autoFoundation, reportFailure: false))
             {
                 AutoPlaceMinerPlugin.Log?.LogInfo("大型采矿机使用中心快速候选完成放置");
                 return;
@@ -144,12 +146,13 @@ namespace AutoPlaceMiner
                 $"候选最大覆盖 {candidates[0].TargetCount}/{groupVeinCount} 条，" +
                 $"{candidates.Count} 个位置/角度候选（搜索 {searchTimer.ElapsedMilliseconds}ms），开始原生建造校验");
             Place(player, planet, factory, physics, click, item, desc, candidates,
-                groupCenter, groupRadius, groupVeinCount, reportFailure: true);
+                groupCenter, groupRadius, groupVeinCount, autoFoundation, reportFailure: true);
         }
 
         private static bool Place(Player player, PlanetData planet, PlanetFactory factory, PlanetPhysics physics,
             BuildTool_Click click, ItemProto item, PrefabDesc desc, List<Candidate> candidates,
-            Vector3 searchCenter, float searchRadius, int groupVeinCount, bool reportFailure)
+            Vector3 searchCenter, float searchRadius, int groupVeinCount, bool autoFoundation,
+            bool reportFailure)
         {
             var validator = new BuildTool_Click();
             validator._Init(GameMain.data);
@@ -193,6 +196,10 @@ namespace AutoPlaceMiner
                     var bestTotal = 0;
                     var rejected = new Dictionary<EBuildCondition, int>();
                     var examined = 0;
+                    var foundationPlaced = 0;
+                    var foundationItems = 0;
+                    var foundationSand = 0;
+                    var groundFailures = new HashSet<Candidate>();
 
                     foreach (var candidate in candidates)
                     {
@@ -206,6 +213,8 @@ namespace AutoPlaceMiner
                                 out var total, out var condition))
                         {
                             rejected[condition] = rejected.TryGetValue(condition, out var count) ? count + 1 : 1;
+                            if (condition == EBuildCondition.NeedGround || condition == EBuildCondition.NeedWater)
+                                groundFailures.Add(candidate);
                             continue;
                         }
 
@@ -229,6 +238,68 @@ namespace AutoPlaceMiner
                                     out var total, out var condition))
                             {
                                 rejected[condition] = rejected.TryGetValue(condition, out var count) ? count + 1 : 1;
+                                if (condition == EBuildCondition.NeedGround || condition == EBuildCondition.NeedWater)
+                                    groundFailures.Add(candidate);
+                                continue;
+                            }
+
+                            if (best == null || candidate.TargetCount > best.TargetCount ||
+                                candidate.TargetCount == best.TargetCount && total > bestTotal)
+                            {
+                                best = candidate;
+                                bestTotal = total;
+                            }
+                        }
+                    }
+
+                    // 水面矿脉：普通校验会因没有陆地支撑而失败。只在没有更好的陆地
+                    // 位置时，尝试给最高覆盖的水面候选铺地基，再重新按原生规则校验。
+                    if (autoFoundation && (best == null || best.TargetCount < groupVeinCount))
+                    {
+                        var foundationSize = FoundationHelper.GetFoundationSize(desc);
+                        var attempts = 0;
+                        AutoPlaceMinerPlugin.Log?.LogInfo(
+                            $"自动地基检查：水面判定 {NeedsFoundation(planet, candidates[0].Position, candidates[0].Yaw, desc)}，" +
+                            $"NeedGround/NeedWater 失败候选 {groundFailures.Count} 个，地基尺寸 {foundationSize}×{foundationSize}");
+                        foreach (var candidate in candidates)
+                        {
+                            if (best != null && candidate.TargetCount <= best.TargetCount) break;
+                            if (attempts >= 4) break;
+                            if (!NeedsFoundation(planet, candidate.Position, candidate.Yaw, desc) &&
+                                !groundFailures.Contains(candidate)) continue;
+                            if (!FoundationHelper.CanAttempt(player))
+                            {
+                                AutoPlaceMinerPlugin.Log?.LogWarning("自动地基材料不足：需要地基物品和沙土");
+                                break;
+                            }
+
+                            attempts++;
+                            if (!FoundationHelper.TryPave(planet, factory, player, candidate.Position, foundationSize,
+                                    out var itemsUsed, out var sandUsed, out var error))
+                            {
+                                AutoPlaceMinerPlugin.Log?.LogWarning(
+                                    $"水中矿脉铺地基失败：{error ?? "未知原因"}（位置 {candidate.Position}）");
+                                continue;
+                            }
+
+                            foundationPlaced++;
+                            foundationItems += itemsUsed;
+                            foundationSand += sandUsed;
+                            var foundationSurface = planet.data.QueryModifiedHeight(candidate.Position);
+                            candidate.Position = candidate.Position.normalized *
+                                Mathf.Max(planet.realRadius + 0.2f, foundationSurface + 0.1f);
+
+                            physics.RefreshColliders();
+                            physics.SetPlanetPhysicsColliderDirty();
+                            physics.nearColliderLogic.ActiveCollidersInArea(candidate.Position, 48f);
+                            Physics.SyncTransforms();
+
+                            if (!Validate(validator, preview, item, desc, candidate, livePreviewIndex,
+                                    out var total, out var condition))
+                            {
+                                rejected[condition] = rejected.TryGetValue(condition, out var count) ? count + 1 : 1;
+                                AutoPlaceMinerPlugin.Log?.LogWarning(
+                                    $"水中矿脉铺地基后仍无法建造：{condition}（位置 {candidate.Position}）");
                                 continue;
                             }
 
@@ -275,7 +346,10 @@ namespace AutoPlaceMiner
 
                     AutoPlaceMinerPlugin.Log?.LogInfo(
                         $"已放置大型采矿机：预建造 {prebuildId}，位置 {best.Position}，角度 {best.Yaw:0.0}°，" +
-                        $"矿脉群共 {groupVeinCount} 条，本机覆盖当前群 {best.TargetCount} 条，同类型总覆盖 {bestTotal} 条");
+                        $"矿脉群共 {groupVeinCount} 条，本机覆盖当前群 {best.TargetCount} 条，同类型总覆盖 {bestTotal} 条" +
+                        (foundationPlaced > 0
+                            ? $"，水中地基 {foundationPlaced} 处（地基 {foundationItems}，沙土 {foundationSand}）"
+                            : ""));
                     //AutoPlaceMinerPlugin.Tip(
                     //    $"已自动定位并放置大型采矿机：矿脉群共 {groupVeinCount} 条，本机覆盖 {best.TargetCount} 条" +
                     //    (bestTotal > best.TargetCount ? $"，同类型共覆盖 {bestTotal} 条" : "") +
@@ -292,6 +366,21 @@ namespace AutoPlaceMiner
             {
                 validator._Free();
             }
+        }
+
+        private static bool NeedsFoundation(PlanetData planet, Vector3 position, float yaw, PrefabDesc desc)
+        {
+            if (FoundationHelper.IsUnderwater(planet, position)) return true;
+            if (desc?.landPoints == null) return false;
+
+            var rotation = Maths.SphericalRotation(position, yaw);
+            foreach (var point in desc.landPoints)
+            {
+                var landPoint = position + rotation * new Vector3(point.x, 0f, point.z);
+                if (FoundationHelper.IsUnderwater(planet, landPoint)) return true;
+            }
+
+            return false;
         }
 
         private static bool PrepareValidator(BuildTool validator)
@@ -568,7 +657,8 @@ namespace AutoPlaceMiner
         }
 
         private static bool FindTargetGroup(PlanetFactory factory, Vector3 position, float realRadius,
-            out int group, out EVeinType type, out Vector3 center, out float radius, out int veinCount)
+            out int group, out EVeinType type, out Vector3 center, out float radius,
+            out int veinCount)
         {
             group = 0;
             type = EVeinType.None;

@@ -19,6 +19,7 @@ dotnet build .\AutoPlaceMiner\AutoPlaceMiner.csproj -c Release
 - 用原生 `BuildTool_Click.CheckBuildConditions` 做最终合法性校验。
 - 校验期间临时隐藏当前手持建筑的预览模型，避免把玩家自己的预览当成碰撞体。
 - 通过后调用原生 `CreatePrebuilds` 放置。
+- 水中矿脉：先做普通原生校验；没有更好的陆地位置时，对高覆盖水面候选铺设地基（尺寸按建筑占地计算），再重新跑原生校验和放置。地基逻辑与 AutoConnectPower 一致，会消耗地基物品和沙土。
 
 ## 性能
 

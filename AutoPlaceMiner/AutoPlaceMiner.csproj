@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>netstandard2.1</TargetFramework>
@@ -24,6 +24,9 @@
 		<None Update="README.md">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+		<None Update="CHANGELOG.md">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 
 	<Target Name="DeployToProfile" AfterTargets="Build" Condition="'$(DeployPluginDir)' != ''">
@@ -32,6 +35,7 @@
 		<Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
 		<Copy SourceFiles="manifest.json" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('manifest.json')" />
 		<Copy SourceFiles="README.md" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('README.md')" />
+		<Copy SourceFiles="CHANGELOG.md" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('CHANGELOG.md')" />
 		<Copy SourceFiles="icon.png" DestinationFolder="$(DeployPluginDir)" SkipUnchangedFiles="true" Condition="Exists('icon.png')" />
 	</Target>
 
