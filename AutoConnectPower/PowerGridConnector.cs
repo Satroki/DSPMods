@@ -203,12 +203,6 @@ namespace AutoConnectPower
             var watch = Stopwatch.StartNew();
             Scan();
 
-            if (_autoFoundation)
-            {
-                AutoConnectPowerPlugin.Log?.LogInfo(
-                    $"自动地基液体表面检测：planetType={_planet.type}, waterItemId={_planet.waterItemId}, waterHeight={_planet.waterHeight:F2}, realRadius={_planet.realRadius:F2}, hasLiquid={_hasWater}");
-            }
-
             if (!_hasGrid)
             {
                 AutoConnectPowerPlugin.Tip(_uncoveredDirs.Count > 0
@@ -280,7 +274,7 @@ namespace AutoConnectPower
 
                 if (_foundationPaved == 0 && _foundationSkipped > 0)
                 {
-                    AutoConnectPowerPlugin.Log?.LogWarning("自动铺地基未成功：请确认背包/手上有足够的地基物品（1131）和沙土。");
+                    AutoConnectPowerPlugin.Log?.LogWarning("自动铺地基未成功：检查地基物品（1131）和沙土。");
                 }
             }
 
@@ -291,7 +285,7 @@ namespace AutoConnectPower
 
             AutoConnectPowerPlugin.Tip(text);
             AutoConnectPowerPlugin.Log?.LogInfo(
-                $"自动连接电网完成：{text}；耗时 {watch.ElapsedMilliseconds} ms");
+                $"自动连接电网：建成 {built}，虚影 {ghosts}，电网 {_networkCount}→{networksAfter}，地基 {_foundationPaved}/{_foundationSkipped}，耗时 {watch.ElapsedMilliseconds}ms");
         }
 
         private void Scan()
@@ -563,7 +557,7 @@ namespace AutoConnectPower
                 {
                     _failedLinks++;
                     AutoConnectPowerPlugin.Log?.LogWarning(
-                        $"无法连接电网 {target.NetworkId}：最近距离 {bestDistance:F1} m，线路被水面/熔岩或建筑阻挡。");
+                        $"无法连接电网 {target.NetworkId}（{bestDistance:F0}m）");
                     _remaining.RemoveAt(bestComponent);
                     continue;
                 }
@@ -979,9 +973,26 @@ namespace AutoConnectPower
             ColliderData collider = item.prefabDesc.buildCollider;
             Vector3 center = position + rotation * collider.pos;
             Quaternion colliderRotation = rotation * collider.q;
+            Vector3 ext = collider.ext;
+            if (ext.x < 0.1f) ext.x = 1.0f;
+            if (ext.y < 0.1f) ext.y = 1.2f;
+            if (ext.z < 0.1f) ext.z = 1.0f;
+            // 只留很小的余量：太大余量会把本来能放下的窄缝也判成阻挡。
+            ext.x += 0.12f;
+            ext.z += 0.12f;
+
+            // 远处的 collider 可能没有在 Unity Physics 中激活；先激活附近 collider，
+            // 让下面的 Physics.OverlapBox 能像手动建造一样检测熔炉、传送带等远处建筑。
+            NearColliderLogic nearCollider = _planet.physics.nearColliderLogic;
+            if (nearCollider != null)
+            {
+                nearCollider.ActiveCollidersInArea(position, 5f);
+                Physics.SyncTransforms();
+            }
+
             int count = Physics.OverlapBoxNonAlloc(
                 center,
-                collider.ext,
+                ext,
                 TmpColliders,
                 colliderRotation,
                 BuildCollisionMask,
@@ -992,11 +1003,18 @@ namespace AutoConnectPower
                 Collider collided = TmpColliders[i];
                 if (collided == null) continue;
 
-                bool hasData = _planet.physics.GetColliderData(collided, out ColliderData data);
-                // 虚影（prebuild）也是实体障碍，即使它的 collider 在建造预览层也要拦住。
-                if (hasData && data.objType == EObjectType.Prebuild) return true;
+                // BuildingCollider 层就是生产设施、传送带、电力塔等建筑碰撞体，直接视为障碍。
+                if (collided.gameObject.layer == (int)Layer.BuildingCollider) return true;
 
-                // 只有玩家/蓝图当前拿着的建造预览才忽略，不能把虚影建筑也跳过。
+                // 矿脉不属于建筑阻挡；建在矿脉上会埋矿，但原生建造也允许。
+                if (collided.gameObject.layer == (int)Layer.Vein) continue;
+
+                bool hasData = _planet.physics.GetColliderData(collided, out ColliderData data);
+
+                // 实体/虚影/残骸/敌人等真实对象一律视为障碍；不能只信 isForBuild。
+                if (hasData && data.objType != EObjectType.None) return true;
+
+                // 玩家当前拿着的建造预览忽略；虚影建筑没有 BuildPreviewModel，上面已经拦住。
                 if (collided.gameObject.layer == 18 && collided.GetComponent<BuildPreviewModel>() != null) continue;
                 if (hasData && data.isForBuild) return true;
             }
@@ -1084,8 +1102,11 @@ namespace AutoConnectPower
                 }
             }
 
-            AutoConnectPowerPlugin.Log?.LogInfo(
-                $"自动地基：计划塔 {_plan.Count + _foundationSkipped} 座，液体表面塔 {waterTowers} 座，铺成功 {_foundationPaved} 座，跳过 {_foundationSkipped} 座。");
+            if (_foundationPaved > 0 || _foundationSkipped > 0)
+            {
+                AutoConnectPowerPlugin.Log?.LogInfo(
+                    $"自动地基：水面/熔岩塔 {waterTowers}，成功 {_foundationPaved}，跳过 {_foundationSkipped}");
+            }
 
             // 清掉可能残留的整平缓存，避免后续 BuildFinally 使用到上一次失败的地形改动。
             _factory.BeginFlattenTerrain();

@@ -32,7 +32,7 @@ namespace AutoConnectPower
     {
         public const string PluginGuid = "Satroki.dsp.AutoConnectPower";
         public const string PluginName = "AutoConnectPower";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<TowerMode> TowerModeConfig;

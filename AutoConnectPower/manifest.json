@@ -1,8 +1,8 @@
 {
   "name": "AutoConnectPower",
-  "version_number": "1.0.0",
+  "version_number": "1.0.1",
   "website_url": "https://github.com/Satroki/DSPMods/tree/master/AutoConnectPower",
-  "description": "一键自动连接本星球的电网：扫描发电与用电设备，用最少的电力感应塔/无线输电塔补全电网。本 MOD 完全由 AI 开发，可自行调整。One-click power grid auto-connection; fully AI-developed and freely customizable.",
+  "description": "一键自动连接本星球电网：扫描发电与用电设备，用最少的电力感应塔/无线输电塔补全电网。One-click power grid auto-connection.",
   "dependencies": [
     "xiaoye97-BepInEx-5.4.17"
   ]
