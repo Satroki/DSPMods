@@ -13,12 +13,13 @@ namespace AutoPlaceMiner
     {
         public const string PluginGuid = "Satroki.dsp.AutoPlaceMiner";
         public const string PluginName = "AutoPlaceMiner";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.2.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<KeyCode> Hotkey;
         internal static ConfigEntry<bool> SuppressCameraRoll;
         internal static ConfigEntry<bool> AutoFoundation;
+        internal static ConfigEntry<bool> RestoreBuriedVeins;
         internal static ConfigEntry<bool> ShowResult;
 
         private Harmony _harmony;
@@ -41,6 +42,11 @@ namespace AutoPlaceMiner
                 "AutoFoundation",
                 true,
                 "水中矿脉自动铺地基。仅在没有更好的陆地位置时，为大型采矿机落点铺设地基，消耗地基物品和沙土；默认开启。");
+            RestoreBuriedVeins = Config.Bind(
+                "General",
+                "RestoreBuriedVeins",
+                true,
+                "搜索前恢复当前矿脉群中被完全掩埋在地下的矿脉，恢复后再计算覆盖；被建筑/虚影占用的矿脉会跳过。默认开启。");
             ShowResult = Config.Bind(
                 "General",
                 "ShowResult",
@@ -77,7 +83,8 @@ namespace AutoPlaceMiner
             catch (Exception exception)
             {
                 Logger.LogError($"自动摆放大型采矿机失败：{exception}");
-                Tip("自动摆放失败，请查看 BepInEx 日志");
+                Tip(L10n.T("自动摆放失败，请查看 BepInEx 日志",
+                    "Auto placement failed. Check the BepInEx log."));
             }
         }
 

@@ -107,16 +107,40 @@ namespace AutoPlaceMiner
 
             if (!HasItem(player, item.ID))
             {
-                AutoPlaceMinerPlugin.Tip("背包中没有大型采矿机");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "背包中没有大型采矿机",
+                    "No Advanced Mining Machine in the inventory."));
                 return;
             }
 
             var autoFoundation = AutoPlaceMinerPlugin.AutoFoundation?.Value ?? true;
-            if (!FindTargetGroup(factory, position, planet.realRadius,
+            var restoreBuried = AutoPlaceMinerPlugin.RestoreBuriedVeins?.Value ?? true;
+            if (!FindTargetGroup(factory, position, planet.realRadius, restoreBuried,
                     out var group, out var type, out var groupCenter, out var groupRadius, out var groupVeinCount))
             {
-                AutoPlaceMinerPlugin.Tip("附近没有可开采的固体矿脉");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "附近没有可开采的固体矿脉",
+                    "No minable solid veins nearby."));
                 return;
+            }
+
+            if (restoreBuried)
+            {
+                var restored = RestoreTargetVeins(factory, planet, physics, group, type, groupRadius);
+                if (!ComputeGroupStats(factory, group, type, planet.realRadius, false,
+                        out groupCenter, out groupRadius, out groupVeinCount))
+                {
+                    AutoPlaceMinerPlugin.Tip(restored > 0
+                        ? L10n.T("被掩埋的矿脉恢复后仍没有可用矿脉",
+                            "No usable veins remain after restoring buried veins.")
+                        : L10n.T("矿脉被完全掩埋，且无法安全恢复",
+                            "The veins are fully buried and could not be safely restored."));
+                    return;
+                }
+
+                if (restored > 0)
+                    AutoPlaceMinerPlugin.Log?.LogInfo(
+                        $"恢复被掩埋矿脉 {restored} 条，矿脉群共 {groupVeinCount} 条");
             }
 
             // 先用矿脉群中心附近的一小圈候选试一下。如果这里已经能覆盖当前矿脉群
@@ -137,7 +161,9 @@ namespace AutoPlaceMiner
             searchTimer.Stop();
             if (candidates.Count == 0)
             {
-                AutoPlaceMinerPlugin.Tip("当前矿脉附近没有可覆盖的建造位置");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "当前矿脉附近没有可覆盖的建造位置",
+                    "No valid placement position near the current veins."));
                 return;
             }
 
@@ -166,7 +192,9 @@ namespace AutoPlaceMiner
 
                 if (!PrepareValidator(validator))
                 {
-                    if (reportFailure) AutoPlaceMinerPlugin.Tip("无法初始化建造校验器，请查看日志");
+                    if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
+                        "无法初始化建造校验器，请查看日志",
+                        "Could not initialize the build validator. Check the log."));
                     return false;
                 }
 
@@ -319,7 +347,9 @@ namespace AutoPlaceMiner
                         AutoPlaceMinerPlugin.Log?.LogWarning(
                             $"大型采矿机候选位置被原生规则拒绝：{string.Join(", ", reasons)}" +
                             (reportFailure ? "" : "（快速候选，接着做完整搜索）"));
-                        if (reportFailure) AutoPlaceMinerPlugin.Tip("未找到无碰撞的摆放位置");
+                        if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "未找到无碰撞的摆放位置",
+                            "No collision-free placement position was found."));
                         return false;
                     }
 
@@ -327,7 +357,9 @@ namespace AutoPlaceMiner
                     if (!Validate(validator, preview, item, desc, best, livePreviewIndex,
                             out bestTotal, out _))
                     {
-                        if (reportFailure) AutoPlaceMinerPlugin.Tip("选中的位置已失效，请重试");
+                        if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "选中的位置已失效，请重试",
+                            "The selected position is no longer valid. Try again."));
                         return false;
                     }
 
@@ -340,7 +372,9 @@ namespace AutoPlaceMiner
                     var prebuildId = preview.objId < 0 ? -preview.objId : 0;
                     if (prebuildId <= 0)
                     {
-                        if (reportFailure) AutoPlaceMinerPlugin.Tip("放置失败：物品不足或位置无效");
+                        if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "放置失败：物品不足或位置无效",
+                            "Placement failed: missing items or invalid position."));
                         return false;
                     }
 
@@ -389,7 +423,9 @@ namespace AutoPlaceMiner
             {
                 AutoPlaceMinerPlugin.Log?.LogError(
                     "找不到 BuildTool 的 tmpPackage/tmpInhandId/tmpInhandCount 字段，游戏版本可能已变更");
-                AutoPlaceMinerPlugin.Tip("游戏版本不兼容：找不到建造校验字段");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "游戏版本不兼容：找不到建造校验字段",
+                    "Incompatible game version: build validator fields not found."));
                 return false;
             }
 
@@ -656,8 +692,123 @@ namespace AutoPlaceMiner
             return nearby;
         }
 
+        private static int RestoreTargetVeins(PlanetFactory factory, PlanetData planet, PlanetPhysics physics,
+            int group, EVeinType type, float groupRadius)
+        {
+            if (factory?.veinPool == null || planet?.data == null || physics == null) return 0;
+
+            var center = Vector3.zero;
+            var count = 0;
+            var veins = factory.veinPool;
+            var minimumVisibleHeight = planet.realRadius - 40f;
+
+            for (var i = 1; i < factory.veinCursor && i < veins.Length; i++)
+            {
+                ref var vein = ref veins[i];
+                if (vein.id != i || vein.amount <= 0 || vein.groupIndex != group) continue;
+                center += vein.pos.normalized;
+                count++;
+            }
+            if (count == 0) return 0;
+            center = center.normalized * (planet.realRadius + 0.2f);
+
+            var obstacles = new List<ColliderData>();
+            var radius = Mathf.Max(16f, groupRadius + 12f);
+            foreach (var chunk in physics.colChunks)
+            {
+                for (var i = 1; i < chunk.cursor; i++)
+                {
+                    var collider = chunk.colliderPool[i];
+                    var bound = radius + collider.ext.magnitude + collider.radius;
+                    if (collider.idType != 0 && collider.isForBuild &&
+                        (collider.pos - center).sqrMagnitude <= bound * bound)
+                        obstacles.Add(collider);
+                }
+            }
+
+            var restored = 0;
+            for (var i = 1; i < factory.veinCursor && i < veins.Length; i++)
+            {
+                ref var vein = ref veins[i];
+                if (vein.id != i || vein.amount <= 0 || vein.groupIndex != group || vein.type != type ||
+                    vein.colliderId <= 0 || vein.minerCount > 0 || vein.pos.sqrMagnitude < 1f) continue;
+                if (vein.pos.magnitude >= minimumVisibleHeight) continue;
+
+                var surface = vein.pos.normalized * (planet.data.QueryModifiedHeight(vein.pos) - 0.13f);
+                var collider = physics.GetColliderData(vein.colliderId);
+                collider.pos = surface + surface.normalized * 0.4f;
+
+                var obstructed = false;
+                foreach (var obstacle in obstacles)
+                {
+                    var bound = obstacle;
+                    if (bound.shape != EColliderShape.Box)
+                    {
+                        bound.idType = (int)EColliderShape.Box << 24;
+                        bound.q = Quaternion.identity;
+                        bound.ext = new Vector3(Mathf.Abs(obstacle.ext.x), Mathf.Abs(obstacle.ext.y),
+                            Mathf.Abs(obstacle.ext.z)) + Vector3.one * obstacle.radius;
+                    }
+
+                    if (MinerPlacementGeometry.Intersects(new MinerPlacementGeometry.Box(bound), collider))
+                    {
+                        obstructed = true;
+                        break;
+                    }
+                }
+                if (obstructed) continue;
+
+                SetVeinPosition(factory, physics, i, surface);
+                restored++;
+            }
+
+            if (restored > 0)
+            {
+                physics.RefreshColliders();
+                if (GameMain.gpuiManager != null) GameMain.gpuiManager.SyncAllGPUBuffer();
+                GameMain.gameScenario?.NotifyOnVeinReformed(2);
+            }
+
+            return restored;
+        }
+
+        private static void SetVeinPosition(PlanetFactory factory, PlanetPhysics physics, int id, Vector3 position)
+        {
+            ref var vein = ref factory.veinPool[id];
+            vein.pos = position;
+
+            ref var collider = ref physics.GetColliderDataRef(vein.colliderId);
+            collider.pos = position + position.normalized * 0.4f;
+            physics.SetPlanetPhysicsColliderDirty();
+
+            if (GameMain.gpuiManager != null)
+                GameMain.gpuiManager.AlterModel(vein.modelIndex, vein.modelId, id, position, setBuffer: false);
+
+            var proto = LDB.veins.Select((int)vein.type);
+            if (proto == null || GameMain.gpuiManager == null) return;
+
+            var up = position.normalized;
+            if (vein.minerId0 > 0)
+            {
+                GameMain.gpuiManager.AlterModel(proto.MinerBaseModelIndex, vein.minerBaseModelId, vein.minerId0,
+                    position + up * 0.1f, setBuffer: false);
+                GameMain.gpuiManager.AlterModel(proto.MinerCircleModelIndex, vein.minerCircleModelId0, vein.minerId0,
+                    position + up * 0.4f, setBuffer: false);
+            }
+
+            if (vein.minerId1 > 0)
+                GameMain.gpuiManager.AlterModel(proto.MinerCircleModelIndex, vein.minerCircleModelId1, vein.minerId1,
+                    position + up * 0.6f, setBuffer: false);
+            if (vein.minerId2 > 0)
+                GameMain.gpuiManager.AlterModel(proto.MinerCircleModelIndex, vein.minerCircleModelId2, vein.minerId2,
+                    position + up * 0.8f, setBuffer: false);
+            if (vein.minerId3 > 0)
+                GameMain.gpuiManager.AlterModel(proto.MinerCircleModelIndex, vein.minerCircleModelId3, vein.minerId3,
+                    position + up, setBuffer: false);
+        }
+
         private static bool FindTargetGroup(PlanetFactory factory, Vector3 position, float realRadius,
-            out int group, out EVeinType type, out Vector3 center, out float radius,
+            bool includeBuried, out int group, out EVeinType type, out Vector3 center, out float radius,
             out int veinCount)
         {
             group = 0;
@@ -675,9 +826,11 @@ namespace AutoPlaceMiner
             {
                 ref var vein = ref veins[i];
                 if (vein.id != i || vein.amount <= 0 || vein.type == EVeinType.None || vein.type == EVeinType.Oil ||
-                    vein.colliderId <= 0 || vein.pos.magnitude < minimumVisibleHeight) continue;
+                    vein.colliderId <= 0 || vein.pos.sqrMagnitude < 1f) continue;
+                if (!includeBuried && vein.pos.magnitude < minimumVisibleHeight) continue;
 
-                var distance = (vein.pos - position).sqrMagnitude;
+                var surface = vein.pos.normalized * realRadius;
+                var distance = (surface - position).sqrMagnitude;
                 if (distance >= bestDistance) continue;
 
                 bestDistance = distance;
@@ -688,14 +841,28 @@ namespace AutoPlaceMiner
 
             if (!found) return false;
 
+            return ComputeGroupStats(factory, group, type, realRadius, includeBuried,
+                out center, out radius, out veinCount);
+        }
+
+        private static bool ComputeGroupStats(PlanetFactory factory, int group, EVeinType type, float realRadius,
+            bool includeBuried, out Vector3 center, out float radius, out int veinCount)
+        {
+            center = Vector3.zero;
+            radius = 0f;
+            veinCount = 0;
+
             var sum = Vector3.zero;
             var count = 0;
+            var minimumVisibleHeight = realRadius - 40f;
+            var veins = factory.veinPool;
             for (var i = 1; i < factory.veinCursor && i < veins.Length; i++)
             {
                 ref var vein = ref veins[i];
                 if (vein.id != i || vein.amount <= 0 || vein.groupIndex != group || vein.type != type ||
-                    vein.colliderId <= 0 || vein.pos.magnitude < minimumVisibleHeight) continue;
-                sum += vein.pos;
+                    vein.colliderId <= 0) continue;
+                if (!includeBuried && vein.pos.magnitude < minimumVisibleHeight) continue;
+                sum += vein.pos.normalized * realRadius;
                 count++;
             }
 
@@ -708,8 +875,10 @@ namespace AutoPlaceMiner
             {
                 ref var vein = ref veins[i];
                 if (vein.id != i || vein.amount <= 0 || vein.groupIndex != group || vein.type != type ||
-                    vein.colliderId <= 0 || vein.pos.magnitude < minimumVisibleHeight) continue;
-                maxDistance = Mathf.Max(maxDistance, (vein.pos - center).sqrMagnitude);
+                    vein.colliderId <= 0) continue;
+                if (!includeBuried && vein.pos.magnitude < minimumVisibleHeight) continue;
+                maxDistance = Mathf.Max(maxDistance,
+                    (vein.pos.normalized * realRadius - center).sqrMagnitude);
             }
 
             radius = Mathf.Sqrt(maxDistance);
