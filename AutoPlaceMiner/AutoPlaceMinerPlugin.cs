@@ -13,7 +13,7 @@ namespace AutoPlaceMiner
     {
         public const string PluginGuid = "Satroki.dsp.AutoPlaceMiner";
         public const string PluginName = "AutoPlaceMiner";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.2.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<KeyCode> Hotkey;
@@ -21,6 +21,7 @@ namespace AutoPlaceMiner
         internal static ConfigEntry<bool> AutoFoundation;
         internal static ConfigEntry<bool> RestoreBuriedVeins;
         internal static ConfigEntry<bool> ShowResult;
+        internal static ConfigEntry<bool> VerboseLog;
 
         private Harmony _harmony;
 
@@ -52,6 +53,11 @@ namespace AutoPlaceMiner
                 "ShowResult",
                 true,
                 "在屏幕上显示自动摆放结果提示。");
+            VerboseLog = Config.Bind(
+                "General",
+                "VerboseLog",
+                false,
+                "输出搜索、候选校验、地基等详细日志。Output detailed search, validation, and foundation logs.");
 
             _harmony = new Harmony(PluginGuid);
             try
@@ -91,6 +97,18 @@ namespace AutoPlaceMiner
         internal static void Tip(string message)
         {
             if (message != null && ShowResult != null && ShowResult.Value) UIRealtimeTip.Popup(message);
+        }
+
+        internal static bool Verbose => VerboseLog != null && VerboseLog.Value;
+
+        internal static void VerboseInfo(string message)
+        {
+            if (Verbose) Log?.LogInfo(message);
+        }
+
+        internal static void VerboseWarning(string message)
+        {
+            if (Verbose) Log?.LogWarning(message);
         }
 
         // 只用于判断是否要拦截 Q 的相机横滚。这里不要求已经打开建造模式，

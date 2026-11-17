@@ -1,11 +1,16 @@
 # Changelog
 
+## v1.2.1
+
+- 优化自动摆放的搜索与校验性能。
+- 新增详细日志开关，并合并重复的校验失败日志。
+- 修复高地落点、水下自动地基及材料不足提示。
+
 ## v1.2.0
 
-- Added fully buried vein restoration (`RestoreBuriedVeins`).
-- In-game popup messages now follow the game language (Chinese/English).
+- 新增完全掩埋矿脉恢复与中英双语提示。
 
 ## v1.1.0
 
-- Added automatic foundation for underwater veins (`AutoFoundation`).
-- Supports sandbox Infinite Sand.
+- 新增水中矿脉自动地基。
+- 支持沙盒无限沙土。

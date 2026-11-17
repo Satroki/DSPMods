@@ -15,9 +15,11 @@ namespace AutoPlaceMiner
 
         public static bool IsUnderwater(PlanetData planet, Vector3 position)
         {
-            if (planet == null || planet.waterHeight <= 0.01f) return false;
-            float waterLevel = planet.realRadius + planet.waterHeight;
-            return planet.data.QueryHeight(position) < waterLevel + 0.25f;
+            if (planet?.data == null) return false;
+            // 部分星球/地形没有独立的 waterHeight，但海床仍低于海平面。
+            // 以海平面为基准判断，避免只依赖 waterHeight 而漏掉水下矿脉。
+            float seaLevel = planet.realRadius + Mathf.Max(0f, planet.waterHeight);
+            return planet.data.QueryHeight(position) < seaLevel + 0.25f;
         }
 
         /// <summary>
@@ -62,10 +64,11 @@ namespace AutoPlaceMiner
         }
 
         public static bool TryPave(PlanetData planet, PlanetFactory factory, Player player, Vector3 position,
-            int size, out int itemsUsed, out int sandUsed, out string error)
+            int size, out int itemsUsed, out int sandUsed, out bool supplyMissing, out string error)
         {
             itemsUsed = 0;
             sandUsed = 0;
+            supplyMissing = false;
             error = null;
 
             if (planet == null || factory == null || player == null || size <= 0)
@@ -123,6 +126,7 @@ namespace AutoPlaceMiner
             int haveItems = player.package.GetItemCount(PlatformSystem.REFORM_ID) + player.inhandItemCount;
             if (haveItems < count)
             {
+                supplyMissing = true;
                 error = $"地基不足（需要 {count}，现有 {haveItems}）";
                 return false;
             }
@@ -142,6 +146,7 @@ namespace AutoPlaceMiner
             if (remainingSand < 0)
             {
                 factory.BeginFlattenTerrain();
+                supplyMissing = true;
                 error = $"沙土不足（需要 {needSand}，现有 {player.sandCount}）";
                 return false;
             }

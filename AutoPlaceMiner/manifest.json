@@ -1,6 +1,6 @@
 {
   "name": "AutoPlaceMiner",
-  "version_number": "1.2.0",
+  "version_number": "1.2.1",
   "website_url": "https://github.com/Satroki/DSPMods/tree/master/AutoPlaceMiner",
   "description": "按 Q 自动为大型采矿机寻找最佳位置与角度，支持水中矿脉自动地基和掩埋矿脉恢复。Press Q to auto-place the Advanced Mining Machine with automatic foundation and buried-vein restoration.",
   "dependencies": [

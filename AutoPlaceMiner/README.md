@@ -1,5 +1,7 @@
 # AutoPlaceMiner
 
+> 本 MOD 完全由 AI 开发，代码、配置和默认值都可以按你的需要自行修改。
+
 **中文** | [English](#english)
 
 ## 中文
@@ -8,10 +10,10 @@
 
 ### 功能
 
-- 同时搜索大型采矿机的**摆放位置**和**朝向**。
+- 自动搜索大型采矿机的最佳摆放位置和朝向。
 - 优先覆盖鼠标附近的“当前矿脉群”；相邻的同类型矿脉也会计入总覆盖数。
 - 默认开启自动地基：没有更好的陆地位置时，会为水中矿脉的落点铺设地基，消耗地基物品和沙土。
-- 默认开启掩埋矿脉恢复：搜索前会把当前矿脉群中被完全掩埋在地下的矿脉恢复到地表。
+- 默认开启掩埋矿脉恢复：会把当前矿脉群中被完全掩埋在地下的矿脉恢复到地表。
 - 找不到合法位置时不会强行放置。
 - 默认拦截 `Q` 的相机横滚，避免自动摆放时镜头同时滚动；快捷键可配置。
 
@@ -32,6 +34,7 @@
 | `General.AutoFoundation` | `true` | 水中矿脉自动铺地基，消耗地基物品和沙土 |
 | `General.RestoreBuriedVeins` | `true` | 搜索前恢复当前矿脉群中被完全掩埋的矿脉 |
 | `General.ShowResult` | `true` | 显示结果提示 |
+| `General.VerboseLog` | `false` | 输出搜索、候选校验、地基等详细日志 |
 
 ### 注意
 
@@ -45,14 +48,16 @@
 
 ## English
 
+> This mod is fully AI-developed. You are free to modify its code, configuration, and defaults.
+
 While building an **Advanced Mining Machine**, press `Q` to automatically search for the position and angle that cover the most veins, then place the miner.
 
 ### Features
 
-- Searches both the **placement position** and the **rotation** of the Advanced Mining Machine.
+- Searches for the best placement position and rotation of the Advanced Mining Machine.
 - Prioritizes the current vein group near the cursor; adjacent groups of the same ore type also count toward total coverage.
 - Auto foundation is enabled by default: when no better land position exists, it lays a foundation at a water position for underwater veins, consuming foundation items and soil.
-- Buried-vein restoration is enabled by default: fully buried veins in the current group are restored to the surface before searching.
+- Buried-vein restoration is enabled by default: fully buried veins in the current group are restored to the surface.
 - Does not force placement when no valid position exists.
 - Suppresses the camera roll bound to `Q` by default while holding an Advanced Mining Machine; the hotkey is configurable.
 
@@ -73,6 +78,7 @@ Config file: `BepInEx/config/Satroki.dsp.AutoPlaceMiner.cfg`
 | `General.AutoFoundation` | `true` | Lay foundation for underwater vein placements, consuming foundation items and soil |
 | `General.RestoreBuriedVeins` | `true` | Restore fully buried veins in the current group before searching |
 | `General.ShowResult` | `true` | Show result messages |
+| `General.VerboseLog` | `false` | Output detailed search, validation, and foundation logs |
 
 ### Notes
 

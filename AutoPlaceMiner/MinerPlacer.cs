@@ -9,9 +9,10 @@ namespace AutoPlaceMiner
     /// <summary>
     /// 大型采矿机（Advanced Mining Machine）的自动摆放。
     ///
-    /// 先按矿脉群估算一片可能的建造区域，在该区域内同时搜索“摆放位置 + 朝向”，
-    /// 再用游戏原生的 BuildTool_Click.CheckBuildConditions 做碰撞、地形、建造范围、
-    /// 资源类型和间距检查。这样位置和角度都与手动点击建造保持一致。
+    /// 先按矿脉群把目标矿点投影到局部平面，在每个角度用固定大小矩形的滑动扫描
+    /// 直接求最大覆盖中心；几何候选坐标再交给游戏原生的
+    /// BuildTool_Click.CheckBuildConditions 做碰撞、地形、建造范围、资源类型和间距检查。
+    /// 复杂地形下几何候选全部失败时，才退回原有的网格搜索。
     /// </summary>
     internal static class MinerPlacer
     {
@@ -30,6 +31,15 @@ namespace AutoPlaceMiner
         private const float ExtendedAngleStep = 1f;
         private const float NearbyRadius = 24f;
         private const float TargetGroupRadius = 35f;
+
+        // 大型采矿机覆盖区：宽 12.5m、深 15.5m，中心在矿机后方 10m。
+        private const float FieldHalfWidth = 6.25f;
+        private const float FieldHalfDepth = 7.75f;
+        private const float FieldCenterOffset = 10f;
+        private const float DirectAngleStep = 0.5f;
+        private const int DirectCentersPerAngle = 6;
+        private const int MaxFullCandidates = 128;
+        private const float DirectNearbyRadius = 36f;
 
         // 原生校验每次都会做 Physics.OverlapBox，限制次数避免在完全不可建造的位置卡住。
         private const int MaxNativeChecks = 512;
@@ -75,6 +85,20 @@ namespace AutoPlaceMiner
             public float Yaw;
             public int TargetCount;
             public int TotalCount;
+        }
+
+        private readonly struct AngleCenter
+        {
+            public readonly float U;
+            public readonly float V;
+            public readonly int Count;
+
+            public AngleCenter(float u, float v, int count)
+            {
+                U = u;
+                V = v;
+                Count = count;
+            }
         }
 
         internal static void TryPlace()
@@ -139,26 +163,70 @@ namespace AutoPlaceMiner
                 }
 
                 if (restored > 0)
-                    AutoPlaceMinerPlugin.Log?.LogInfo(
+                    AutoPlaceMinerPlugin.VerboseInfo(
                         $"恢复被掩埋矿脉 {restored} 条，矿脉群共 {groupVeinCount} 条");
             }
 
-            // 先用矿脉群中心附近的一小圈候选试一下。如果这里已经能覆盖当前矿脉群
-            // 的全部矿脉，就已经是最优解，不必再做整片网格搜索。
-            var quick = BuildQuickCandidates(factory, planet, player, group, type, groupCenter, groupRadius,
-                groupVeinCount, position, click.yaw);
-            if (quick.Count > 0 && Place(player, planet, factory, physics, click, item, desc, quick,
-                    groupCenter, groupRadius, groupVeinCount,
-                    autoFoundation, reportFailure: false))
+            // 直接按角度做固定大小矩形的滑动扫描，求每个角度的几何最优覆盖中心。
+            var searchTimer = Stopwatch.StartNew();
+            var direct = BuildDirectCandidates(factory, planet, player, group, type, groupVeinCount,
+                groupCenter, groupRadius, position, click.yaw, out var optimalOutOfRange);
+            searchTimer.Stop();
+
+            if (optimalOutOfRange)
             {
-                AutoPlaceMinerPlugin.Log?.LogInfo("大型采矿机使用中心快速候选完成放置");
+                AutoPlaceMinerPlugin.VerboseWarning(
+                    $"几何最优位置超出建造范围（候选 {direct.Count} 个），不回退网格搜索");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "最优摆放位置超出建造范围，请靠近矿脉后再试。",
+                    "The best placement position is outside build range. Move closer to the veins and try again."));
                 return;
             }
 
-            var searchTimer = Stopwatch.StartNew();
+            var directSupplyMissing = false;
+            if (direct.Count > 0)
+            {
+                var placeTimer = Stopwatch.StartNew();
+                var placed = Place(player, planet, factory, physics, click, item, desc, direct,
+                    groupCenter, groupRadius, groupVeinCount, autoFoundation, out directSupplyMissing,
+                    reportFailure: false);
+                placeTimer.Stop();
+                if (placed)
+                {
+                    AutoPlaceMinerPlugin.VerboseInfo(
+                        $"大型采矿机使用几何扫描候选完成放置（{direct.Count} 个候选）；" +
+                        $"几何搜索 {searchTimer.ElapsedMilliseconds}ms，原生校验+放置 {placeTimer.ElapsedMilliseconds}ms");
+                    return;
+                }
+            }
+
+            // 已经找到满覆盖候选时不能退回低覆盖位置；否则日志会出现“找到 20 条、
+            // 实际只放 18 条”的情况。让玩家清理碰撞/地形后再试。
+            if (direct.Count > 0 && direct[0].TargetCount >= groupVeinCount)
+            {
+                if (directSupplyMissing)
+                {
+                    AutoPlaceMinerPlugin.VerboseWarning(
+                        "满覆盖候选需要地基，但地基物品或沙土不足");
+                    AutoPlaceMinerPlugin.Tip(L10n.T(
+                        "地基物品或沙土不足，无法为水中矿脉铺设地基。",
+                        "Not enough foundation items or soil to pave the underwater vein placement."));
+                    return;
+                }
+
+                AutoPlaceMinerPlugin.VerboseWarning(
+                    $"满覆盖候选均未通过原生建造校验（{direct.Count} 个候选），不回退低覆盖位置");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "找到满覆盖位置，但原生建造校验未通过。请清理碰撞或换一个矿脉群边缘再试。",
+                    "A full-coverage position was found but failed native build checks. Clear obstructions or try another edge of the vein group."));
+                return;
+            }
+
+            // 没有满覆盖候选时，退回原来的网格搜索，保证复杂地形下仍有机会。
+            var fallbackTimer = Stopwatch.StartNew();
             var candidates = BuildCandidates(factory, planet, player, group, type,
                 groupCenter, groupRadius, groupVeinCount, position, click.yaw);
-            searchTimer.Stop();
+            fallbackTimer.Stop();
             if (candidates.Count == 0)
             {
                 AutoPlaceMinerPlugin.Tip(L10n.T(
@@ -167,19 +235,21 @@ namespace AutoPlaceMiner
                 return;
             }
 
-            AutoPlaceMinerPlugin.Log?.LogInfo(
+            AutoPlaceMinerPlugin.VerboseInfo(
                 $"目标矿脉群 {group}（{type}），共 {groupVeinCount} 条，中心 {groupCenter}，半径 {groupRadius:0.0}m，" +
-                $"候选最大覆盖 {candidates[0].TargetCount}/{groupVeinCount} 条，" +
-                $"{candidates.Count} 个位置/角度候选（搜索 {searchTimer.ElapsedMilliseconds}ms），开始原生建造校验");
+                $"几何候选 {direct.Count} 个（{searchTimer.ElapsedMilliseconds}ms），" +
+                $"兜底网格候选 {candidates.Count} 个（{fallbackTimer.ElapsedMilliseconds}ms），" +
+                $"兜底最大覆盖 {candidates[0].TargetCount}/{groupVeinCount} 条");
             Place(player, planet, factory, physics, click, item, desc, candidates,
-                groupCenter, groupRadius, groupVeinCount, autoFoundation, reportFailure: true);
+                groupCenter, groupRadius, groupVeinCount, autoFoundation, out _, reportFailure: true);
         }
 
         private static bool Place(Player player, PlanetData planet, PlanetFactory factory, PlanetPhysics physics,
             BuildTool_Click click, ItemProto item, PrefabDesc desc, List<Candidate> candidates,
             Vector3 searchCenter, float searchRadius, int groupVeinCount, bool autoFoundation,
-            bool reportFailure)
+            out bool foundationSupplyMissing, bool reportFailure)
         {
+            foundationSupplyMissing = false;
             var validator = new BuildTool_Click();
             validator._Init(GameMain.data);
             try
@@ -209,8 +279,6 @@ namespace AutoPlaceMiner
 
                 var oldTest = player.controller.cmd.test;
                 var hiddenPreviews = HideLivePreviewModels(click.actionBuild.model);
-                //AutoPlaceMinerPlugin.Log?.LogInfo(
-                //    $"当前预览条件 {liveCondition}，previewIndex {livePreviewIndex}，隐藏预览模型 {hiddenPreviews.Count} 个");
                 try
                 {
                     // 一次性激活整个搜索区附近的碰撞体；否则 Physics.OverlapBox 可能漏掉
@@ -219,6 +287,10 @@ namespace AutoPlaceMiner
                     physics.nearColliderLogic.ActiveCollidersInArea(searchCenter,
                         Mathf.Max(64f, searchRadius + 52f));
                     Physics.SyncTransforms();
+
+                    var geometryObstacles = CollectPlacementObstacles(physics, searchCenter,
+                        Mathf.Max(48f, searchRadius + 36f));
+                    var geometrySkips = 0;
 
                     Candidate best = null;
                     var bestTotal = 0;
@@ -237,6 +309,18 @@ namespace AutoPlaceMiner
                              candidate.TargetCount == best.TargetCount && candidate.TotalCount <= bestTotal)) break;
 
                         if (examined++ >= MaxNativeChecks) break;
+
+                        // 满覆盖候选经常只是底座压到矿脉。先用与原生相同的 Box/Sphere/Capsule
+                        // 几何做一次碰撞预筛，避免为每个 Collide 候选执行 Physics.OverlapBox。
+                        if (candidate.TargetCount >= groupVeinCount &&
+                            GeometryCollides(desc, candidate, geometryObstacles))
+                        {
+                            geometrySkips++;
+                            rejected[EBuildCondition.Collide] =
+                                rejected.TryGetValue(EBuildCondition.Collide, out var skipped) ? skipped + 1 : 1;
+                            continue;
+                        }
+
                         if (!Validate(validator, preview, item, desc, candidate, livePreviewIndex,
                                 out var total, out var condition))
                         {
@@ -286,36 +370,40 @@ namespace AutoPlaceMiner
                     {
                         var foundationSize = FoundationHelper.GetFoundationSize(desc);
                         var attempts = 0;
-                        AutoPlaceMinerPlugin.Log?.LogInfo(
+                        AutoPlaceMinerPlugin.VerboseInfo(
                             $"自动地基检查：水面判定 {NeedsFoundation(planet, candidates[0].Position, candidates[0].Yaw, desc)}，" +
                             $"NeedGround/NeedWater 失败候选 {groundFailures.Count} 个，地基尺寸 {foundationSize}×{foundationSize}");
                         foreach (var candidate in candidates)
                         {
                             if (best != null && candidate.TargetCount <= best.TargetCount) break;
                             if (attempts >= 4) break;
-                            if (!NeedsFoundation(planet, candidate.Position, candidate.Yaw, desc) &&
-                                !groundFailures.Contains(candidate)) continue;
+                            // 只处理水面/水边候选；陆地上的 NeedGround（陡坡、悬崖）
+                            // 不应被自动地基整平，否则会出现“地面下沉、矿机悬空”。
+                            if (!NeedsFoundation(planet, candidate.Position, candidate.Yaw, desc)) continue;
                             if (!FoundationHelper.CanAttempt(player))
                             {
-                                AutoPlaceMinerPlugin.Log?.LogWarning("自动地基材料不足：需要地基物品和沙土");
+                                foundationSupplyMissing = true;
+                                AutoPlaceMinerPlugin.VerboseWarning("自动地基材料不足：需要地基物品和沙土");
                                 break;
                             }
 
                             attempts++;
                             if (!FoundationHelper.TryPave(planet, factory, player, candidate.Position, foundationSize,
-                                    out var itemsUsed, out var sandUsed, out var error))
+                                    out var itemsUsed, out var sandUsed, out var supplyMissing, out var error))
                             {
-                                AutoPlaceMinerPlugin.Log?.LogWarning(
+                                if (supplyMissing) foundationSupplyMissing = true;
+                                AutoPlaceMinerPlugin.VerboseWarning(
                                     $"水中矿脉铺地基失败：{error ?? "未知原因"}（位置 {candidate.Position}）");
+                                if (supplyMissing) break;
                                 continue;
                             }
 
                             foundationPlaced++;
                             foundationItems += itemsUsed;
                             foundationSand += sandUsed;
-                            var foundationSurface = planet.data.QueryModifiedHeight(candidate.Position);
-                            candidate.Position = candidate.Position.normalized *
-                                Mathf.Max(planet.realRadius + 0.2f, foundationSurface + 0.1f);
+                            // FlattenTerrainReform 把地基整平到海平面附近；不能再使用
+                            // 原高地地形的 QueryModifiedHeight，否则地形下沉后矿机会悬空。
+                            candidate.Position = candidate.Position.normalized * (planet.realRadius + 0.2f);
 
                             physics.RefreshColliders();
                             physics.SetPlanetPhysicsColliderDirty();
@@ -326,7 +414,7 @@ namespace AutoPlaceMiner
                                     out var total, out var condition))
                             {
                                 rejected[condition] = rejected.TryGetValue(condition, out var count) ? count + 1 : 1;
-                                AutoPlaceMinerPlugin.Log?.LogWarning(
+                                AutoPlaceMinerPlugin.VerboseWarning(
                                     $"水中矿脉铺地基后仍无法建造：{condition}（位置 {candidate.Position}）");
                                 continue;
                             }
@@ -344,12 +432,14 @@ namespace AutoPlaceMiner
                     {
                         var reasons = new List<string>();
                         foreach (var pair in rejected) reasons.Add($"{pair.Key}×{pair.Value}");
-                        AutoPlaceMinerPlugin.Log?.LogWarning(
+                        AutoPlaceMinerPlugin.VerboseWarning(
                             $"大型采矿机候选位置被原生规则拒绝：{string.Join(", ", reasons)}" +
                             (reportFailure ? "" : "（快速候选，接着做完整搜索）"));
-                        if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
-                            "未找到无碰撞的摆放位置",
-                            "No collision-free placement position was found."));
+                        if (reportFailure) AutoPlaceMinerPlugin.Tip(foundationSupplyMissing
+                            ? L10n.T("地基物品或沙土不足，无法为水中矿脉铺设地基。",
+                                "Not enough foundation items or soil to pave the underwater vein placement.")
+                            : L10n.T("未找到无碰撞的摆放位置",
+                                "No collision-free placement position was found."));
                         return false;
                     }
 
@@ -378,6 +468,16 @@ namespace AutoPlaceMiner
                         return false;
                     }
 
+                    if (geometrySkips > 0)
+                        AutoPlaceMinerPlugin.VerboseInfo(
+                            $"几何预筛跳过 {geometrySkips} 个与矿脉/建筑碰撞的满覆盖候选");
+                    if (rejected.Count > 0)
+                    {
+                        var reasons = new List<string>();
+                        foreach (var pair in rejected) reasons.Add($"{pair.Key}×{pair.Value}");
+                        AutoPlaceMinerPlugin.VerboseInfo(
+                            $"本次原生校验拒绝统计：{string.Join(", ", reasons)}");
+                    }
                     AutoPlaceMinerPlugin.Log?.LogInfo(
                         $"已放置大型采矿机：预建造 {prebuildId}，位置 {best.Position}，角度 {best.Yaw:0.0}°，" +
                         $"矿脉群共 {groupVeinCount} 条，本机覆盖当前群 {best.TargetCount} 条，同类型总覆盖 {bestTotal} 条" +
@@ -412,6 +512,47 @@ namespace AutoPlaceMiner
             {
                 var landPoint = position + rotation * new Vector3(point.x, 0f, point.z);
                 if (FoundationHelper.IsUnderwater(planet, landPoint)) return true;
+            }
+
+            return false;
+        }
+
+        private static List<ColliderData> CollectPlacementObstacles(PlanetPhysics physics, Vector3 center,
+            float radius)
+        {
+            var obstacles = new List<ColliderData>();
+            if (physics?.colChunks == null) return obstacles;
+
+            foreach (var chunk in physics.colChunks)
+            {
+                for (var i = 1; i < chunk.cursor; i++)
+                {
+                    var collider = chunk.colliderPool[i];
+                    if (collider.idType == 0) continue;
+                    if (!collider.isForBuild && collider.objType != EObjectType.Vein) continue;
+                    var bound = radius + collider.ext.magnitude + collider.radius;
+                    if ((collider.pos - center).sqrMagnitude <= bound * bound)
+                        obstacles.Add(collider);
+                }
+            }
+
+            return obstacles;
+        }
+
+        private static bool GeometryCollides(PrefabDesc desc, Candidate candidate,
+            List<ColliderData> obstacles)
+        {
+            if (!desc.hasBuildCollider || desc.buildColliders == null) return false;
+
+            var rotation = Maths.SphericalRotation(candidate.Position, candidate.Yaw);
+            foreach (var source in desc.buildColliders)
+            {
+                var collider = source;
+                collider.pos = candidate.Position + rotation * source.pos;
+                collider.q = rotation * source.q;
+                var box = new MinerPlacementGeometry.Box(collider);
+                foreach (var obstacle in obstacles)
+                    if (MinerPlacementGeometry.Intersects(box, obstacle)) return true;
             }
 
             return false;
@@ -469,6 +610,187 @@ namespace AutoPlaceMiner
                 if (preview.parameters[i] > 0) total++;
 
             return total > 0;
+        }
+
+        /// <summary>
+        /// 固定角度下，把目标矿脉投影到局部 UV 平面，用固定大小矩形的滑动扫描
+        /// 直接求最大覆盖中心；再对每个角度的前几个中心做原生合法性校验。
+        /// </summary>
+        private static List<Candidate> BuildDirectCandidates(PlanetFactory factory, PlanetData planet, Player player,
+            int targetGroup, EVeinType targetType, int groupVeinCount, Vector3 groupCenter, float groupRadius,
+            Vector3 currentPosition, float currentYaw, out bool optimalOutOfRange)
+        {
+            optimalOutOfRange = false;
+            var result = new List<Candidate>();
+            var nearby = CollectNearbyVeins(factory, groupCenter, groupRadius + DirectNearbyRadius, planet.realRadius);
+            var targetPoints = new List<Vector2>();
+            var centers = new List<AngleCenter>();
+            var window = new List<Vector2>();
+            var center200 = groupCenter.normalized * 200f;
+            var maxDistance = player.mecha.buildArea + 1f;
+            var maxDistanceSquared = maxDistance * maxDistance;
+            var angleCount = Mathf.RoundToInt(360f / DirectAngleStep);
+            var maxAnywhere = 0;
+            var maxInRange = 0;
+            var fullFound = false;
+            var fullCandidates = 0;
+
+            for (var ai = 0; ai < angleCount; ai++)
+            {
+                var yaw = ai * DirectAngleStep;
+                var rotation = Maths.SphericalRotation(groupCenter, yaw);
+                var right = rotation * Vector3.right;
+                var forward = rotation * Vector3.forward;
+
+                targetPoints.Clear();
+                foreach (var vein in nearby)
+                {
+                    if (vein.Group != targetGroup || vein.Type != targetType) continue;
+                    var offset = vein.Normalized - center200;
+                    targetPoints.Add(new Vector2(Vector3.Dot(offset, right), Vector3.Dot(offset, forward)));
+                }
+                if (targetPoints.Count == 0) continue;
+
+                targetPoints.Sort((a, b) => a.y.CompareTo(b.y));
+                centers.Clear();
+                for (var i = 0; i < targetPoints.Count; i++)
+                {
+                    var left = targetPoints[i].x;
+                    AddRectangleCenters(targetPoints, left, window, centers);
+                    AddRectangleCenters(targetPoints, left - FieldHalfWidth * 2f, window, centers);
+                }
+                if (centers.Count == 0) continue;
+
+                centers.Sort((a, b) => b.Count.CompareTo(a.Count));
+                var used = new List<AngleCenter>();
+                var added = 0;
+                foreach (var center in centers)
+                {
+                    var duplicate = false;
+                    foreach (var other in used)
+                    {
+                        if ((other.U - center.U) * (other.U - center.U) +
+                            (other.V - center.V) * (other.V - center.V) < 0.25f)
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (duplicate) continue;
+                    used.Add(center);
+
+                    var centerDirection =
+                        (center200 + right * center.U + forward * center.V).normalized;
+                    var fieldCenter = centerDirection * QueryHeight(planet, centerDirection, groupCenter.magnitude);
+                    var candidate = Evaluate(planet, fieldCenter, yaw, nearby, targetGroup, targetType,
+                        player.position, maxDistanceSquared, requireBuildRange: false);
+                    if (candidate == null) continue;
+
+                    if (candidate.TargetCount > maxAnywhere)
+                    {
+                        maxAnywhere = candidate.TargetCount;
+                        maxInRange = 0;
+                    }
+
+                    var inRange = (candidate.Position - player.position).sqrMagnitude <= maxDistanceSquared;
+                    if (inRange)
+                    {
+                        result.Add(candidate);
+                        if (candidate.TargetCount == maxAnywhere) maxInRange = maxAnywhere;
+                        if (candidate.TargetCount >= groupVeinCount)
+                        {
+                            fullFound = true;
+                            fullCandidates++;
+                            // 这个角度已经达到几何最优，不再评估同角度的次优中心；
+                            // 其它角度仍会继续扫描，以取得不同朝向的满覆盖候选。
+                            break;
+                        }
+                    }
+
+                    if (++added >= DirectCentersPerAngle) break;
+                }
+            }
+
+            // 把当前预览位置也作为候选，避免几何最优位置刚好不可建造。
+            var currentForward = Maths.SphericalRotation(currentPosition, currentYaw) * Vector3.forward;
+            var currentCandidate = Evaluate(planet, currentPosition - currentForward * FieldCenterOffset,
+                currentYaw, nearby, targetGroup, targetType, player.position, maxDistanceSquared,
+                requireBuildRange: false);
+            if (currentCandidate != null)
+            {
+                if (currentCandidate.TargetCount > maxAnywhere)
+                {
+                    maxAnywhere = currentCandidate.TargetCount;
+                    maxInRange = 0;
+                }
+
+                if ((currentCandidate.Position - player.position).sqrMagnitude <= maxDistanceSquared)
+                {
+                    result.Add(currentCandidate);
+                    if (currentCandidate.TargetCount == maxAnywhere) maxInRange = maxAnywhere;
+                }
+            }
+
+            optimalOutOfRange = maxAnywhere > 0 && maxInRange < maxAnywhere;
+            if (fullFound)
+            {
+                // 存在满覆盖候选时只验证满覆盖候选，不能因为前几个被碰撞拒绝就直接降级。
+                result.RemoveAll(candidate => candidate.TargetCount < groupVeinCount);
+                result = SelectDiverseCandidates(result, currentPosition, currentYaw);
+                AutoPlaceMinerPlugin.VerboseInfo(
+                    $"几何扫描：收集到 {fullCandidates} 个满覆盖候选，选取 {result.Count} 个不同朝向的候选进行校验（目标 {groupVeinCount} 条）");
+            }
+            result.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
+            return result;
+        }
+
+        private static List<Candidate> SelectDiverseCandidates(List<Candidate> candidates,
+            Vector3 currentPosition, float currentYaw)
+        {
+            if (candidates.Count <= MaxFullCandidates) return candidates;
+
+            const int binCount = 36; // 10° 一个朝向区间
+            var bestByBin = new Candidate[binCount];
+            foreach (var candidate in candidates)
+            {
+                var bin = Mathf.Clamp(Mathf.FloorToInt(Mathf.Repeat(candidate.Yaw, 360f) / 10f), 0, binCount - 1);
+                var current = bestByBin[bin];
+                if (current == null || Compare(candidate, current, currentPosition, currentYaw) < 0)
+                    bestByBin[bin] = candidate;
+            }
+
+            var selected = new List<Candidate>(MaxFullCandidates);
+            foreach (var candidate in bestByBin)
+                if (candidate != null) selected.Add(candidate);
+
+            candidates.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
+            foreach (var candidate in candidates)
+            {
+                if (selected.Count >= MaxFullCandidates) break;
+                if (!selected.Contains(candidate)) selected.Add(candidate);
+            }
+
+            return selected;
+        }
+
+        private static void AddRectangleCenters(List<Vector2> points, float left,
+            List<Vector2> window, List<AngleCenter> centers)
+        {
+            window.Clear();
+            var right = left + FieldHalfWidth * 2f;
+            foreach (var point in points)
+                if (point.x >= left && point.x <= right) window.Add(point);
+            if (window.Count == 0) return;
+
+            var lo = 0;
+            for (var hi = 0; hi < window.Count; hi++)
+            {
+                while (window[hi].y - window[lo].y > FieldHalfDepth * 2f) lo++;
+                var count = hi - lo + 1;
+                var centerU = left + FieldHalfWidth;
+                var centerV = (window[lo].y + window[hi].y) * 0.5f;
+                centers.Add(new AngleCenter(centerU, centerV, count));
+            }
         }
 
         private static List<Candidate> BuildQuickCandidates(PlanetFactory factory, PlanetData planet, Player player,
@@ -623,7 +945,7 @@ namespace AutoPlaceMiner
 
         private static Candidate Evaluate(PlanetData planet, Vector3 fieldCenter, float yaw,
             List<NearbyVein> nearby, int targetGroup, EVeinType targetType,
-            Vector3 playerPosition, float maxDistanceSquared)
+            Vector3 playerPosition, float maxDistanceSquared, bool requireBuildRange = true)
         {
             // 覆盖区中心在矿机后方 10m，因此由场地中心反推矿机位置。
             var forward = Maths.SphericalRotation(fieldCenter, yaw) * Vector3.forward;
@@ -658,9 +980,11 @@ namespace AutoPlaceMiner
 
             if (mixed || targetCount == 0) return null;
 
-            // 覆盖计算只需要方向；高度查询放在确认有覆盖之后，减少 QueryModifiedHeight 次数。
-            var position = positionDirection * QueryHeight(planet, positionDirection, fieldCenter.magnitude);
-            if ((position - playerPosition).sqrMagnitude > maxDistanceSquared) return null;
+            // 大型采矿机与手动建造一致：落点固定在水平面高度，由游戏在建造时
+            // 下挖高地并返还沙土。不能使用高地地形的 QueryModifiedHeight，否则地形
+            // 下挖后预建造矿机会悬浮在原高度。
+            var position = positionDirection * (planet.realRadius + 0.2f);
+            if (requireBuildRange && (position - playerPosition).sqrMagnitude > maxDistanceSquared) return null;
 
             return new Candidate
             {
