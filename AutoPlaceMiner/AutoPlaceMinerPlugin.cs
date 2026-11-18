@@ -13,7 +13,7 @@ namespace AutoPlaceMiner
     {
         public const string PluginGuid = "Satroki.dsp.AutoPlaceMiner";
         public const string PluginName = "AutoPlaceMiner";
-        public const string PluginVersion = "1.2.1";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<KeyCode> Hotkey;
@@ -66,10 +66,10 @@ namespace AutoPlaceMiner
             }
             catch (Exception exception)
             {
-                Logger.LogWarning($"无法拦截相机横滚键，Q 可能同时滚动相机：{exception.Message}");
+                LogWarning($"无法拦截相机横滚键，Q 可能同时滚动相机：{exception.Message}");
             }
 
-            Logger.LogInfo($"{PluginName} v{PluginVersion} 已加载，快捷键：{Hotkey.Value}");
+            LogInfo($"{PluginName} v{PluginVersion} 已加载，快捷键：{Hotkey.Value}，批量：Alt+{Hotkey.Value}");
         }
 
         private void OnDestroy()
@@ -84,11 +84,13 @@ namespace AutoPlaceMiner
 
             try
             {
-                MinerPlacer.TryPlace();
+                var batch = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+                if (batch) MinerPlacer.TryPlaceOtherGroups();
+                else MinerPlacer.TryPlace();
             }
             catch (Exception exception)
             {
-                Logger.LogError($"自动摆放大型采矿机失败：{exception}");
+                LogError($"自动摆放大型采矿机失败：{exception}");
                 Tip(L10n.T("自动摆放失败，请查看 BepInEx 日志",
                     "Auto placement failed. Check the BepInEx log."));
             }
@@ -101,14 +103,29 @@ namespace AutoPlaceMiner
 
         internal static bool Verbose => VerboseLog != null && VerboseLog.Value;
 
+        internal static void LogInfo(string message)
+        {
+            Log?.LogInfo($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        }
+
+        internal static void LogWarning(string message)
+        {
+            Log?.LogWarning($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        }
+
+        internal static void LogError(string message)
+        {
+            Log?.LogError($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+        }
+
         internal static void VerboseInfo(string message)
         {
-            if (Verbose) Log?.LogInfo(message);
+            if (Verbose) LogInfo(message);
         }
 
         internal static void VerboseWarning(string message)
         {
-            if (Verbose) Log?.LogWarning(message);
+            if (Verbose) LogWarning(message);
         }
 
         // 只用于判断是否要拦截 Q 的相机横滚。这里不要求已经打开建造模式，
