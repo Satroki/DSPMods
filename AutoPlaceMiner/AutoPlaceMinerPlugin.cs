@@ -13,7 +13,7 @@ namespace AutoPlaceMiner
     {
         public const string PluginGuid = "Satroki.dsp.AutoPlaceMiner";
         public const string PluginName = "AutoPlaceMiner";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.3.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<KeyCode> Hotkey;

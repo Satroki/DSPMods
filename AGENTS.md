@@ -32,6 +32,7 @@ dotnet build .\DSPMods.sln -c Release
 
 ## 版本与发布
 
+- **未经用户明确指示，不得修改版本号，也不得执行任何写入型 git 操作（`git add`、`commit`、`push`、`tag`、`reset`、`checkout`、`stash` 等）。日常修复只修改文件并构建，保持工作区未提交状态；只读的 `git status`、`git diff`、`git log` 可用于检查。用户明确要求“升版本/提交/推送”后，才执行对应操作。**
 - 本仓库自有模组的版本必须三处一致：
   1. `manifest.json` 的 `version_number`
   2. 插件代码中的 `PluginVersion`
@@ -81,9 +82,9 @@ dotnet build .\DSPMods.sln -c Release
 - 不提交 `bin/`、`obj/`、`SourceCode/` 或本地配置。
 - 修改后至少：
   1. 构建整个解决方案；
-  2. 检查版本号三处一致；
+  2. 如用户明确要求升版本，检查版本号三处一致；
   3. 如能进入游戏，验证启动日志和关键交互；
-  4. 更新 README/CHANGELOG。
+  4. 如用户明确要求发布，更新 README/CHANGELOG。
 - 涉及 Unity 对象、物理或工厂状态时，注意主线程限制；后台线程只处理纯数据。
 
 ## 提交

@@ -16,10 +16,29 @@ namespace AutoPlaceMiner
         public static bool IsUnderwater(PlanetData planet, Vector3 position)
         {
             if (planet?.data == null) return false;
-            // 部分星球/地形没有独立的 waterHeight，但海床仍低于海平面。
-            // 以海平面为基准判断，避免只依赖 waterHeight 而漏掉水下矿脉。
+            // waterItemId：0 无海洋，-1 熔岩，-2 冰面，正数是水/硫酸等液体。
+            // 熔岩和硫酸也属于需要地基的液体环境；冰面不主动铺普通地基。
+            if (planet.waterItemId == 0 || planet.waterItemId == -2) return false;
+            return IsLowTerrain(planet, position);
+        }
+
+        /// <summary>
+        /// 地形是否低于该星球的液面/海平面。用于识别坑洼和液体表面；
+        /// 不判断星球是否有液体，调用方需自行区分。
+        /// </summary>
+        public static bool IsLowTerrain(PlanetData planet, Vector3 position)
+        {
+            if (planet?.data == null) return false;
             float seaLevel = planet.realRadius + Mathf.Max(0f, planet.waterHeight);
-            return planet.data.QueryHeight(position) < seaLevel + 0.25f;
+            return planet.data.QueryHeight(position) < seaLevel;
+        }
+
+        /// <summary>
+        /// 熔岩或硫酸海洋。这两种环境附近的高地也可能需要垫地基。
+        /// </summary>
+        public static bool IsLavaOrAcid(PlanetData planet)
+        {
+            return planet != null && (planet.waterItemId == -1 || planet.waterItemId == 1116);
         }
 
         /// <summary>

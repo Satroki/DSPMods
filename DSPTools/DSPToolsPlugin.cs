@@ -4,7 +4,7 @@ using System;
 
 namespace DSPTools
 {
-    [BepInPlugin("Satroki.DSP.plugin.DSPTools", "DSPTools", "1.0.0")]
+    [BepInPlugin("Satroki.DSP.plugin.DSPTools", "DSPTools", "1.1.0")]
     [BepInProcess("DSPGAME.exe")]
     public class DSPToolsPlugin : BaseUnityPlugin
     {
@@ -30,6 +30,10 @@ namespace DSPTools
                 TryRegister(typeof(CargoTrafficPatch), HarmonyId + ".splitter");
             if (LoadConfig.FreeBuyTech.Value)
                 TryRegister(typeof(GameHistoryDataPatch), HarmonyId + ".tech");
+            if (LoadConfig.EnableDarkFogDysonDebuffCap.Value)
+                TryRegister(typeof(DysonSphereDFDebuffCapPatch), DysonSphereDFDebuffCapPatch.HarmonyId);
+            if (LoadConfig.EnableDFSignalTowerPriority.Value)
+                TryRegister(typeof(DFGSignalTowerPriorityPatch), DFGSignalTowerPriorityPatch.HarmonyId);
 
             // 分辨率补丁必须尽早注册：GameResolutions.InitResolutions() 在 DSPGame.Awake 里就被调用，
             // 晚于它就只能靠 GameOption.Apply() 的 prefix 兜底了
@@ -45,6 +49,7 @@ namespace DSPTools
             try
             {
                 Harmony.CreateAndPatchAll(patchType, harmonyId);
+                Logger.LogInfo($"补丁 {patchType.Name} 注册成功（{harmonyId}）");
             }
             catch (Exception ex)
             {

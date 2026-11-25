@@ -36,8 +36,9 @@ namespace AutoPlaceMiner
         private const float FieldHalfWidth = 6.25f;
         private const float FieldHalfDepth = 7.75f;
         private const float DirectAngleStep = 0.5f;
+        private const float CoarseDirectAngleStep = 4f;
         private const int DirectCentersPerAngle = 12;
-        private const int MaxFullCandidates = 32;
+        private const int MaxFullCandidates = 48;
         private const float DirectNearbyRadius = 36f;
 
         // 原生校验每次都会做 Physics.OverlapBox，限制次数避免在完全不可建造的位置卡住。
@@ -81,7 +82,10 @@ namespace AutoPlaceMiner
         private sealed class Candidate
         {
             public Vector3 FieldCenter;
+            // Position 用于原生建造校验（手动预览所在的地形高度）。
             public Vector3 Position;
+            // FinalPosition 是地形下挖/建造成型后的海平面落点。
+            public Vector3 FinalPosition;
             public float Yaw;
             public int TargetCount;
             public int TotalCount;
@@ -148,7 +152,7 @@ namespace AutoPlaceMiner
             var autoFoundation = AutoPlaceMinerPlugin.AutoFoundation?.Value ?? true;
             var restoreBuried = AutoPlaceMinerPlugin.RestoreBuriedVeins?.Value ?? true;
             if (!FindTargetGroup(factory, position, planet.realRadius, restoreBuried,
-                    out var group, out var type, out var groupCenter, out var groupRadius, out var groupVeinCount))
+                    out var group, out var type, out var groupCenter, out var groupRadius, out _))
             {
                 AutoPlaceMinerPlugin.Tip(L10n.T(
                     "附近没有可开采的固体矿脉",
@@ -156,23 +160,57 @@ namespace AutoPlaceMiner
                 return;
             }
 
+            if (HasExistingMiner(factory, item.ID, groupCenter, groupRadius))
+            {
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "该矿脉群已有大型采矿机或虚影",
+                    "This vein group already has an Advanced Mining Machine or ghost."));
+                return;
+            }
+
+            TryPlaceGroup(player, planet, factory, physics, click, item, desc,
+                group, type, position, autoFoundation, restoreBuried, batchMode: false, out _);
+        }
+
+        /// <summary>
+        /// 单个矿脉群的完整放置流程。单次 Q 与批量 Alt+Q 共用，保证恢复掩埋、
+        /// 几何搜索、网格兜底、自动地基和虚影判定完全一致。
+        /// </summary>
+        private static bool TryPlaceGroup(Player player, PlanetData planet, PlanetFactory factory,
+            PlanetPhysics physics, BuildTool_Click click, ItemProto item, PrefabDesc desc,
+            int group, EVeinType type, Vector3 position, bool autoFoundation, bool restoreBuried,
+            bool batchMode, out bool ghostPlaced)
+        {
+            ghostPlaced = false;
+
+            // 恢复前先用包含掩埋矿脉的统计取得恢复检查半径；恢复后再按可见矿脉重算。
+            if (!ComputeGroupStats(factory, group, type, planet.realRadius, true,
+                    out var groupCenter, out var groupRadius, out var groupVeinCount))
+                return false;
+
             if (restoreBuried)
             {
                 var restored = RestoreTargetVeins(factory, planet, physics, group, type, groupRadius);
                 if (!ComputeGroupStats(factory, group, type, planet.realRadius, false,
                         out groupCenter, out groupRadius, out groupVeinCount))
                 {
-                    AutoPlaceMinerPlugin.Tip(restored > 0
-                        ? L10n.T("被掩埋的矿脉恢复后仍没有可用矿脉",
-                            "No usable veins remain after restoring buried veins.")
-                        : L10n.T("矿脉被完全掩埋，且无法安全恢复",
-                            "The veins are fully buried and could not be safely restored."));
-                    return;
+                    if (!batchMode)
+                        AutoPlaceMinerPlugin.Tip(restored > 0
+                            ? L10n.T("被掩埋的矿脉恢复后仍没有可用矿脉",
+                                "No usable veins remain after restoring buried veins.")
+                            : L10n.T("矿脉被完全掩埋，且无法安全恢复",
+                                "The veins are fully buried and could not be safely restored."));
+                    return false;
                 }
 
                 if (restored > 0)
                     AutoPlaceMinerPlugin.VerboseInfo(
                         $"恢复被掩埋矿脉 {restored} 条，矿脉群共 {groupVeinCount} 条");
+            }
+            else if (!ComputeGroupStats(factory, group, type, planet.realRadius, false,
+                         out groupCenter, out groupRadius, out groupVeinCount))
+            {
+                return false;
             }
 
             AutoPlaceMinerPlugin.VerboseInfo(
@@ -180,39 +218,83 @@ namespace AutoPlaceMiner
                 $"center={groupCenter}，radius={groupRadius:0.0}，" +
                 $"player={player.position}，buildArea={player.mecha.buildArea:0.0}");
 
-            // 直接按角度做固定大小矩形的滑动扫描，求每个角度的几何最优覆盖中心。
+            // 先用 90 个角度（4°）做粗扫。粗扫有候选就先走原生校验；
+            // 只有粗扫无候选，或候选全部校验失败，才做 0.5° 精扫。
             var searchTimer = Stopwatch.StartNew();
             var direct = BuildDirectCandidates(factory, planet, player, group, type, groupVeinCount,
                 groupCenter, groupRadius, position, click.yaw, out var optimalOutOfRange,
-                desc: desc, physics: physics);
-            searchTimer.Stop();
-
-            if (optimalOutOfRange)
+                allowOutOfRange: batchMode, desc: desc, physics: physics,
+                angleStep: CoarseDirectAngleStep);
+            var coarseHadCandidates = direct.Count > 0;
+            if (!coarseHadCandidates)
             {
-                AutoPlaceMinerPlugin.VerboseWarning(
-                    $"几何最优位置超出建造范围（候选 {direct.Count} 个），不回退网格搜索");
-                AutoPlaceMinerPlugin.Tip(L10n.T(
-                    "最优摆放位置超出建造范围，请靠近矿脉后再试。",
-                    "The best placement position is outside build range. Move closer to the veins and try again."));
-                return;
+                var refined = BuildDirectCandidates(factory, planet, player, group, type, groupVeinCount,
+                    groupCenter, groupRadius, position, click.yaw, out optimalOutOfRange,
+                    allowOutOfRange: batchMode, desc: desc, physics: physics,
+                    angleStep: DirectAngleStep);
+                if (refined.Count > 0) direct = refined;
+                AutoPlaceMinerPlugin.VerboseInfo(
+                    $"几何扫描：90 角度粗扫无候选，0.5° 精扫得到 {direct.Count} 个候选");
             }
 
             var directSupplyMissing = false;
             var directFullCollision = false;
-            if (direct.Count > 0)
+            var placedAsGhost = false;
+            bool TryDirect(List<Candidate> list)
             {
+                if (list.Count == 0) return false;
                 var placeTimer = Stopwatch.StartNew();
-                var placed = Place(player, planet, factory, physics, click, item, desc, direct,
+                var placed = Place(player, planet, factory, physics, click, item, desc, list,
                     groupCenter, groupRadius, groupVeinCount, autoFoundation, out directSupplyMissing,
-                    out directFullCollision, reportFailure: false);
+                    out directFullCollision, out var directUsedGhost, reportFailure: false,
+                    allowOutOfRange: batchMode, autoRangeGhost: batchMode);
                 placeTimer.Stop();
                 if (placed)
                 {
+                    placedAsGhost = directUsedGhost;
                     AutoPlaceMinerPlugin.VerboseInfo(
-                        $"大型采矿机使用几何扫描候选完成放置（{direct.Count} 个候选）；" +
+                        $"大型采矿机使用几何扫描候选完成放置（{list.Count} 个候选）；" +
                         $"几何搜索 {searchTimer.ElapsedMilliseconds}ms，原生校验+放置 {placeTimer.ElapsedMilliseconds}ms");
-                    return;
                 }
+                return placed;
+            }
+
+            // 粗扫有候选时，先交给原生校验；批量模式在 Place 内根据范围决定虚影。
+            if (TryDirect(direct))
+            {
+                ghostPlaced = placedAsGhost;
+                return true;
+            }
+
+            if (coarseHadCandidates)
+            {
+                var refined = BuildDirectCandidates(factory, planet, player, group, type, groupVeinCount,
+                    groupCenter, groupRadius, position, click.yaw, out optimalOutOfRange,
+                    allowOutOfRange: batchMode, desc: desc, physics: physics,
+                    angleStep: DirectAngleStep);
+                if (refined.Count > 0)
+                {
+                    direct = refined;
+                    AutoPlaceMinerPlugin.VerboseInfo(
+                        $"几何扫描：粗扫候选全部校验失败，0.5° 精扫得到 {direct.Count} 个候选");
+                    if (TryDirect(direct))
+                    {
+                        ghostPlaced = placedAsGhost;
+                        return true;
+                    }
+                }
+            }
+
+            searchTimer.Stop();
+
+            if (optimalOutOfRange && !batchMode)
+            {
+                AutoPlaceMinerPlugin.VerboseWarning(
+                    $"几何最优位置超出建造范围（候选 {direct.Count} 个）");
+                AutoPlaceMinerPlugin.Tip(L10n.T(
+                    "最优摆放位置超出建造范围，请靠近矿脉后再试。",
+                    "The best placement position is outside build range. Move closer to the veins and try again."));
+                return false;
             }
 
             // 满覆盖候选如果只是底座压到矿脉，低覆盖位置仍可建造，允许回退；
@@ -223,26 +305,35 @@ namespace AutoPlaceMiner
                 {
                     AutoPlaceMinerPlugin.VerboseWarning(
                         "满覆盖候选需要地基，但地基物品或沙土不足");
-                    AutoPlaceMinerPlugin.Tip(L10n.T(
-                        "地基物品或沙土不足，无法为水中矿脉铺设地基。",
-                        "Not enough foundation items or soil to pave the underwater vein placement."));
-                    return;
+                    if (!batchMode)
+                        AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "地基物品或沙土不足，无法为水中矿脉铺设地基。",
+                            "Not enough foundation items or soil to pave the underwater vein placement."));
+                    return false;
                 }
 
                 if (!directFullCollision)
                 {
-                    AutoPlaceMinerPlugin.VerboseWarning(
-                        $"满覆盖候选均未通过原生建造校验（{direct.Count} 个候选），不回退低覆盖位置");
-                    AutoPlaceMinerPlugin.Tip(L10n.T(
-                        "找到满覆盖位置，但原生建造校验未通过。请清理碰撞或换一个矿脉群边缘再试。",
-                        "A full-coverage position was found but failed native build checks. Clear obstructions or try another edge of the vein group."));
-                    return;
-                }
+                    if (!batchMode)
+                    {
+                        AutoPlaceMinerPlugin.VerboseWarning(
+                            $"满覆盖候选均未通过原生建造校验（{direct.Count} 个候选），不回退低覆盖位置");
+                        AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "找到满覆盖位置，但原生建造校验未通过。请清理碰撞或换一个矿脉群边缘再试。",
+                            "A full-coverage position was found but failed native build checks. Clear obstructions or try another edge of the vein group."));
+                        return false;
+                    }
 
-                // 满覆盖位置只是底座压到矿脉本身时，低覆盖位置仍有建造价值，
-                // 继续走下面的网格兜底，而不是直接拒绝放置。
-                AutoPlaceMinerPlugin.VerboseInfo(
-                    "满覆盖候选仅因矿脉碰撞失败，回退低覆盖位置");
+                    AutoPlaceMinerPlugin.VerboseInfo(
+                        "批量模式：满覆盖候选原生校验失败，回退低覆盖位置生成虚影");
+                }
+                else
+                {
+                    // 满覆盖位置只是底座压到矿脉本身时，低覆盖位置仍有建造价值，
+                    // 继续走下面的网格兜底，而不是直接拒绝放置。
+                    AutoPlaceMinerPlugin.VerboseInfo(
+                        "满覆盖候选仅因矿脉碰撞失败，回退低覆盖位置");
+                }
             }
 
             // 没有满覆盖候选时，退回原来的网格搜索，保证复杂地形下仍有机会。
@@ -252,10 +343,11 @@ namespace AutoPlaceMiner
             fallbackTimer.Stop();
             if (candidates.Count == 0)
             {
-                AutoPlaceMinerPlugin.Tip(L10n.T(
-                    "当前矿脉附近没有可覆盖的建造位置",
-                    "No valid placement position near the current veins."));
-                return;
+                if (!batchMode)
+                    AutoPlaceMinerPlugin.Tip(L10n.T(
+                        "当前矿脉附近没有可覆盖的建造位置",
+                        "No valid placement position near the current veins."));
+                return false;
             }
 
             AutoPlaceMinerPlugin.VerboseInfo(
@@ -263,8 +355,12 @@ namespace AutoPlaceMiner
                 $"几何候选 {direct.Count} 个（{searchTimer.ElapsedMilliseconds}ms），" +
                 $"兜底网格候选 {candidates.Count} 个（{fallbackTimer.ElapsedMilliseconds}ms），" +
                 $"兜底最大覆盖 {candidates[0].TargetCount}/{groupVeinCount} 条");
-            Place(player, planet, factory, physics, click, item, desc, candidates,
-                groupCenter, groupRadius, groupVeinCount, autoFoundation, out _, out _, reportFailure: true);
+            var fallbackPlaced = Place(player, planet, factory, physics, click, item, desc, candidates,
+                groupCenter, groupRadius, groupVeinCount, autoFoundation, out _, out _,
+                out var fallbackUsedGhost, reportFailure: !batchMode,
+                allowOutOfRange: batchMode, autoRangeGhost: batchMode);
+            if (fallbackPlaced) ghostPlaced = fallbackUsedGhost;
+            return fallbackPlaced;
         }
 
         /// <summary>
@@ -305,7 +401,10 @@ namespace AutoPlaceMiner
             if (position.sqrMagnitude < 1f) position = player.buildTarget.position;
             if (position.sqrMagnitude < 1f) return;
 
-            if (!FindTargetGroup(factory, position, planet.realRadius, false,
+            var autoFoundation = AutoPlaceMinerPlugin.AutoFoundation?.Value ?? true;
+            var restoreBuried = AutoPlaceMinerPlugin.RestoreBuriedVeins?.Value ?? true;
+
+            if (!FindTargetGroup(factory, position, planet.realRadius, restoreBuried,
                     out var currentGroup, out var type, out _, out _, out _))
             {
                 AutoPlaceMinerPlugin.Tip(L10n.T(
@@ -314,7 +413,8 @@ namespace AutoPlaceMiner
                 return;
             }
 
-            var groups = FindSameTypeGroups(factory, currentGroup, type, planet.realRadius, player.position);
+            var groups = FindSameTypeGroups(factory, currentGroup, type, planet.realRadius, player.position,
+                restoreBuried);
             if (groups.Count == 0)
             {
                 AutoPlaceMinerPlugin.Tip(L10n.T(
@@ -327,47 +427,22 @@ namespace AutoPlaceMiner
             var ghosts = 0;
             var failed = 0;
             var tooMany = groups.Count > MaxBatchGroups;
-            var autoFoundation = AutoPlaceMinerPlugin.AutoFoundation?.Value ?? true;
-            var maxDistance = player.mecha.buildArea + 1f;
-            var maxDistanceSquared = maxDistance * maxDistance;
 
             foreach (var group in groups)
             {
                 if (placed >= MaxBatchGroups) break;
                 if (HasExistingMiner(factory, item.ID, group.Center, group.Radius)) continue;
 
-                var candidates = BuildDirectCandidates(factory, planet, player, group.Group, type,
-                    group.VeinCount, group.Center, group.Radius, group.Center, 0f,
-                    out _, allowOutOfRange: true, desc: desc, physics: physics);
-                if (candidates.Count == 0)
-                {
-                    failed++;
-                    continue;
-                }
-
-                var inRange = new List<Candidate>();
-                foreach (var candidate in candidates)
-                    if ((candidate.Position - player.position).sqrMagnitude <= maxDistanceSquared)
-                        inRange.Add(candidate);
-
-                var useGhost = inRange.Count == 0;
-                if (!useGhost && !HasItem(player, item.ID))
-                {
-                    failed++;
-                    break;
-                }
-
-                var search = useGhost ? candidates : inRange;
-                if (!Place(player, planet, factory, physics, click, item, desc, search,
-                        group.Center, group.Radius, group.VeinCount, autoFoundation,
-                        out _, out _, reportFailure: false, allowOutOfRange: useGhost, ghost: useGhost))
+                if (!TryPlaceGroup(player, planet, factory, physics, click, item, desc,
+                        group.Group, type, group.Center, autoFoundation, restoreBuried,
+                        batchMode: true, out var ghostPlaced))
                 {
                     failed++;
                     continue;
                 }
 
                 placed++;
-                if (useGhost) ghosts++;
+                if (ghostPlaced) ghosts++;
             }
 
             AutoPlaceMinerPlugin.Tip(L10n.T(
@@ -382,7 +457,7 @@ namespace AutoPlaceMiner
         }
 
         private static List<VeinGroupInfo> FindSameTypeGroups(PlanetFactory factory, int currentGroup,
-            EVeinType type, float realRadius, Vector3 playerPosition)
+            EVeinType type, float realRadius, Vector3 playerPosition, bool includeBuried)
         {
             var groupSet = new HashSet<int>();
             var veins = factory.veinPool;
@@ -397,7 +472,7 @@ namespace AutoPlaceMiner
             var groups = new List<VeinGroupInfo>();
             foreach (var group in groupSet)
             {
-                if (!ComputeGroupStats(factory, group, type, realRadius, false,
+                if (!ComputeGroupStats(factory, group, type, realRadius, includeBuried,
                         out var center, out var radius, out var count)) continue;
                 groups.Add(new VeinGroupInfo
                 {
@@ -464,11 +539,13 @@ namespace AutoPlaceMiner
         private static bool Place(Player player, PlanetData planet, PlanetFactory factory, PlanetPhysics physics,
             BuildTool_Click click, ItemProto item, PrefabDesc desc, List<Candidate> candidates,
             Vector3 searchCenter, float searchRadius, int groupVeinCount, bool autoFoundation,
-            out bool foundationSupplyMissing, out bool fullCoverageCollision,
-            bool reportFailure, bool allowOutOfRange = false, bool ghost = false)
+            out bool foundationSupplyMissing, out bool fullCoverageCollision, out bool usedGhost,
+            bool reportFailure, bool allowOutOfRange = false, bool ghost = false,
+            bool autoRangeGhost = false)
         {
             foundationSupplyMissing = false;
             fullCoverageCollision = false;
+            usedGhost = ghost;
             var oldBuildArea = player.mecha.buildArea;
             if (allowOutOfRange)
             {
@@ -541,17 +618,17 @@ namespace AutoPlaceMiner
 
                         // 满覆盖候选经常只是底座压到矿脉。先用与原生相同的 Box/Sphere/Capsule
                         // 几何做一次碰撞预筛，避免为每个 Collide 候选执行 Physics.OverlapBox。
-                        if (candidate.TargetCount >= groupVeinCount &&
+                        if ((ghost || autoRangeGhost || candidate.TargetCount >= groupVeinCount) &&
                             GeometryCollides(desc, candidate, geometryObstacles,
                                 out var collisionDetail, out var veinCollision))
                         {
                             geometrySkips++;
                             if (veinCollision) veinGeometrySkips++;
                             else buildGeometrySkips++;
-                            fullCoverageCollision = true;
+                            if (candidate.TargetCount >= groupVeinCount) fullCoverageCollision = true;
                             if (AutoPlaceMinerPlugin.Verbose && geometrySkips <= 5)
                                 AutoPlaceMinerPlugin.VerboseWarning(
-                                    $"满覆盖候选几何碰撞：{collisionDetail}");
+                                    $"{(ghost ? "虚影" : "满覆盖")}候选几何碰撞：{collisionDetail}");
                             rejected[EBuildCondition.Collide] =
                                 rejected.TryGetValue(EBuildCondition.Collide, out var skipped) ? skipped + 1 : 1;
                             continue;
@@ -617,9 +694,19 @@ namespace AutoPlaceMiner
                         {
                             if (best != null && candidate.TargetCount <= best.TargetCount) break;
                             if (attempts >= 4) break;
-                            // 只处理水面/水边候选；陆地上的 NeedGround（陡坡、悬崖）
-                            // 不应被自动地基整平，否则会出现“地面下沉、矿机悬空”。
-                            if (!NeedsFoundation(planet, candidate.Position, candidate.Yaw, desc)) continue;
+                            // 水/熔岩/硫酸等液面候选，或原生报 NeedGround 的低洼坑地，
+                            // 才尝试铺地基；普通高地/陡坡不整平，避免地形下沉后矿机悬空。
+                            var liquidNeedsFoundation =
+                                NeedsFoundation(planet, candidate.Position, candidate.Yaw, desc);
+                            var groundFailed = groundFailures.Contains(candidate);
+                            var pitNeedsFoundation = groundFailed &&
+                                                     FoundationHelper.IsLowTerrain(planet, candidate.Position);
+                            // 熔岩/硫酸附近即使落点高于液面，也允许对原生 NeedGround
+                            // 的候选尝试地基，避免简单矿脉因粗糙岩面直接失败。
+                            var harshTerrainNeedsFoundation = groundFailed &&
+                                                              FoundationHelper.IsLavaOrAcid(planet);
+                            if (!liquidNeedsFoundation && !pitNeedsFoundation &&
+                                !harshTerrainNeedsFoundation) continue;
                             if (!FoundationHelper.CanAttempt(player))
                             {
                                 foundationSupplyMissing = true;
@@ -641,9 +728,10 @@ namespace AutoPlaceMiner
                             foundationPlaced++;
                             foundationItems += itemsUsed;
                             foundationSand += sandUsed;
-                            // FlattenTerrainReform 把地基整平到海平面附近；不能再使用
-                            // 原高地地形的 QueryModifiedHeight，否则地形下沉后矿机会悬空。
+                            // FlattenTerrainReform 把地基整平到海平面附近；地形已经
+                            // 改变，校验位置和最终落点都改用海平面。
                             candidate.Position = candidate.Position.normalized * (planet.realRadius + 0.2f);
+                            candidate.FinalPosition = candidate.Position;
 
                             physics.RefreshColliders();
                             physics.SetPlanetPhysicsColliderDirty();
@@ -654,6 +742,8 @@ namespace AutoPlaceMiner
                                     out var total, out var condition))
                             {
                                 rejected[condition] = rejected.TryGetValue(condition, out var count) ? count + 1 : 1;
+                                if (candidate.TargetCount >= groupVeinCount && condition == EBuildCondition.Collide)
+                                    fullCoverageCollision = true;
                                 AutoPlaceMinerPlugin.VerboseWarning(
                                     $"水中矿脉铺地基后仍无法建造：{condition}（位置 {candidate.Position}）");
                                 continue;
@@ -693,13 +783,46 @@ namespace AutoPlaceMiner
                         return false;
                     }
 
+                    // 先根据原始建造范围及覆盖数决定实际建造还是虚影。
+                    var placeGhost = ghost;
+                    if (autoRangeGhost)
+                    {
+                        var normalRange = oldBuildArea + 1f;
+                        placeGhost = best.TargetCount < groupVeinCount ||
+                                     (best.Position - player.position).sqrMagnitude >
+                                     normalRange * normalRange;
+                    }
+                    usedGhost = placeGhost;
+
+                    // 虚影也要做一次几何底座检查。部分低覆盖候选不会进入上面的
+                    // 满覆盖几何预筛；若底座压到矿脉，不能生成穿模的白色虚影。
+                    if (placeGhost && GeometryCollides(desc, best, geometryObstacles,
+                            out var ghostCollisionDetail, out var ghostVeinCollision))
+                    {
+                        rejected[EBuildCondition.Collide] =
+                            rejected.TryGetValue(EBuildCondition.Collide, out var ghostCount) ? ghostCount + 1 : 1;
+                        if (ghostVeinCollision) veinGeometrySkips++;
+                        else buildGeometrySkips++;
+                        AutoPlaceMinerPlugin.VerboseWarning(
+                            $"虚影候选几何碰撞，跳过：{ghostCollisionDetail}");
+                        if (reportFailure) AutoPlaceMinerPlugin.Tip(L10n.T(
+                            "虚影位置与矿脉或建筑碰撞，未放置",
+                            "The ghost position collides with veins or buildings, so it was not placed."));
+                        return false;
+                    }
+
+                    // 原生校验使用地形高度；真正生成预建造时放到海平面，
+                    // 让游戏在建造时下挖高地并返还沙土，避免矿机悬空。
+                    var finalPosition = best.FinalPosition;
                     click.yaw = best.Yaw;
-                    click.castGroundPosSnapped = best.Position;
-                    click.actionBuild.buildTargetPositionWanted = best.Position;
-                    validator.castGroundPosSnapped = best.Position;
+                    click.castGroundPosSnapped = finalPosition;
+                    click.actionBuild.buildTargetPositionWanted = finalPosition;
+                    validator.castGroundPosSnapped = finalPosition;
+                    preview.lpos = preview.lpos2 = finalPosition;
+                    preview.lrot = preview.lrot2 = Maths.SphericalRotation(finalPosition, best.Yaw);
 
                     int prebuildId;
-                    if (ghost)
+                    if (placeGhost)
                     {
                         // 与 AutoConnectPower 的 Ghost 模式一致：直接创建白色预建造虚影，
                         // 不消耗背包物品，建造时再补材料。
@@ -757,17 +880,21 @@ namespace AutoPlaceMiner
 
         private static bool NeedsFoundation(PlanetData planet, Vector3 position, float yaw, PrefabDesc desc)
         {
+            // 落点本体在水下，才需要整平铺地基。
             if (FoundationHelper.IsUnderwater(planet, position)) return true;
-            if (desc?.landPoints == null) return false;
+            if (desc?.landPoints == null || desc.landPoints.Length == 0) return false;
 
+            // 岸边只压到一两个角时不算水下矿脉落点；要求多数占地格在水下，
+            // 避免把岸边陆地误判成水面而自动铺地基。
             var rotation = Maths.SphericalRotation(position, yaw);
+            var underwater = 0;
             foreach (var point in desc.landPoints)
             {
                 var landPoint = position + rotation * new Vector3(point.x, 0f, point.z);
-                if (FoundationHelper.IsUnderwater(planet, landPoint)) return true;
+                if (FoundationHelper.IsUnderwater(planet, landPoint)) underwater++;
             }
 
-            return false;
+            return underwater * 2 > desc.landPoints.Length;
         }
 
         private static List<ColliderData> CollectPlacementObstacles(PlanetPhysics physics, Vector3 center,
@@ -890,7 +1017,8 @@ namespace AutoPlaceMiner
         private static List<Candidate> BuildDirectCandidates(PlanetFactory factory, PlanetData planet, Player player,
             int targetGroup, EVeinType targetType, int groupVeinCount, Vector3 groupCenter, float groupRadius,
             Vector3 currentPosition, float currentYaw, out bool optimalOutOfRange,
-            bool allowOutOfRange = false, PrefabDesc desc = null, PlanetPhysics physics = null)
+            bool allowOutOfRange = false, PrefabDesc desc = null, PlanetPhysics physics = null,
+            float angleStep = DirectAngleStep)
         {
             optimalOutOfRange = false;
             var result = new List<Candidate>();
@@ -901,12 +1029,11 @@ namespace AutoPlaceMiner
             var center200 = groupCenter.normalized * 200f;
             var maxDistance = player.mecha.buildArea + 1f;
             var maxDistanceSquared = maxDistance * maxDistance;
-            var angleCount = Mathf.RoundToInt(360f / DirectAngleStep);
+            var angleCount = Mathf.RoundToInt(360f / angleStep);
             var maxAnywhere = 0;
             var maxInRange = 0;
             var fullFound = false;
             var fullCandidates = 0;
-            var fullAddedTotal = 0;
             var fullGeometryCollisions = 0;
             var obstacles = desc != null && physics != null
                 ? CollectPlacementObstacles(physics, groupCenter, groupRadius + DirectNearbyRadius + 20f)
@@ -914,7 +1041,7 @@ namespace AutoPlaceMiner
 
             for (var ai = 0; ai < angleCount; ai++)
             {
-                var yaw = ai * DirectAngleStep;
+                var yaw = ai * angleStep;
                 var rotation = Maths.SphericalRotation(groupCenter, yaw);
                 var right = rotation * Vector3.right;
                 var forward = rotation * Vector3.forward;
@@ -951,6 +1078,7 @@ namespace AutoPlaceMiner
                 });
                 var used = new List<AngleCenter>();
                 var lowerAdded = 0;
+                var angleFullAdded = 0;
                 foreach (var center in centers)
                 {
                     var potentialFull = center.Count >= groupVeinCount;
@@ -1009,8 +1137,10 @@ namespace AutoPlaceMiner
                         result.Add(candidate);
                         if (isFull)
                         {
-                            fullAddedTotal++;
-                            if (fullAddedTotal >= MaxFullCandidates) break;
+                            angleFullAdded++;
+                            // 每个角度先保留一个几何合法的满覆盖候选，继续扫描
+                            // 其它角度，避免 32 个候选全落在同一侧的熔岩里。
+                            if (angleFullAdded >= 1) break;
                         }
                         else
                         {
@@ -1018,16 +1148,25 @@ namespace AutoPlaceMiner
                         }
                     }
                 }
-
-                // 简单矿脉的满覆盖位置很多，达到上限后不再扫剩余角度。
-                if (fullAddedTotal >= MaxFullCandidates) break;
             }
 
             optimalOutOfRange = maxAnywhere > 0 && maxInRange < maxAnywhere;
             if (fullFound)
             {
-                // 存在满覆盖候选时只验证满覆盖候选，不能因为前几个被碰撞拒绝就直接降级。
-                result.RemoveAll(candidate => candidate.TargetCount < groupVeinCount);
+                // 存在满覆盖候选时优先只验证满覆盖候选；但如果它们全部被几何碰撞
+                // 排除，必须保留低覆盖候选，否则批量模式没有虚影回退位置。
+                var hasUsableFull = result.Exists(candidate => candidate.TargetCount >= groupVeinCount);
+                if (hasUsableFull)
+                {
+                    result.RemoveAll(candidate => candidate.TargetCount < groupVeinCount);
+                }
+                else
+                {
+                    AutoPlaceMinerPlugin.VerboseInfo(
+                        $"几何扫描：{fullCandidates} 个满覆盖候选均被几何碰撞排除，" +
+                        $"保留 {result.Count} 个低覆盖候选用于虚影回退");
+                }
+
                 result = SelectDiverseCandidates(result, currentPosition, currentYaw);
                 AutoPlaceMinerPlugin.VerboseInfo(
                     $"几何扫描：收集到 {fullCandidates} 个满覆盖候选，几何碰撞排除 {fullGeometryCollisions} 个，" +
@@ -1104,17 +1243,17 @@ namespace AutoPlaceMiner
 
             // 中心点以及上下左右 2m，通常已经能覆盖小型矿脉群的全部矿脉。
             for (var x = -2f; x <= 2f; x += 2f)
-            for (var z = -2f; z <= 2f; z += 2f)
-            {
-                var centerDirection = (groupCenter + right * x + forward * z).normalized;
-                var center = centerDirection * 200f;
-                for (var yaw = 0f; yaw < 360f; yaw += CoarseAngleStep)
+                for (var z = -2f; z <= 2f; z += 2f)
                 {
-                    var candidate = Evaluate(planet, center, yaw, nearby, targetGroup, targetType,
-                        player.position, maxDistanceSquared);
-                    if (candidate != null && candidate.TargetCount >= groupVeinCount) result.Add(candidate);
+                    var centerDirection = (groupCenter + right * x + forward * z).normalized;
+                    var center = centerDirection * 200f;
+                    for (var yaw = 0f; yaw < 360f; yaw += CoarseAngleStep)
+                    {
+                        var candidate = Evaluate(planet, center, yaw, nearby, targetGroup, targetType,
+                            player.position, maxDistanceSquared);
+                        if (candidate != null && candidate.TargetCount >= groupVeinCount) result.Add(candidate);
+                    }
                 }
-            }
 
             result.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
             return result;
@@ -1136,17 +1275,17 @@ namespace AutoPlaceMiner
 
             var coarse = new List<Candidate>();
             for (var x = -range; x <= range; x += CoarseCenterStep)
-            for (var z = -range; z <= range; z += CoarseCenterStep)
-            {
-                var centerDirection = (groupCenter + right * x + forward * z).normalized;
-                var center = centerDirection * 200f;
-                for (var yaw = 0f; yaw < 360f; yaw += CoarseAngleStep)
+                for (var z = -range; z <= range; z += CoarseCenterStep)
                 {
-                    var candidate = Evaluate(planet, center, yaw, nearby, targetGroup, targetType,
-                        player.position, maxDistanceSquared);
-                    if (candidate != null) coarse.Add(candidate);
+                    var centerDirection = (groupCenter + right * x + forward * z).normalized;
+                    var center = centerDirection * 200f;
+                    for (var yaw = 0f; yaw < 360f; yaw += CoarseAngleStep)
+                    {
+                        var candidate = Evaluate(planet, center, yaw, nearby, targetGroup, targetType,
+                            player.position, maxDistanceSquared);
+                        if (candidate != null) coarse.Add(candidate);
+                    }
                 }
-            }
 
             coarse.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
             // 已经覆盖当前矿脉群全部矿脉时，覆盖数不可能再提高，省掉精细搜索。
@@ -1173,17 +1312,17 @@ namespace AutoPlaceMiner
             foreach (var seed in seeds)
             {
                 for (var x = -RefineCenterRadius; x <= RefineCenterRadius; x += FineCenterStep)
-                for (var z = -RefineCenterRadius; z <= RefineCenterRadius; z += FineCenterStep)
-                {
-                    var centerDirection = (seed.FieldCenter + right * x + forward * z).normalized;
-                    var center = centerDirection * 200f;
-                    for (var offset = -RefineAngleRadius; offset <= RefineAngleRadius; offset += FineAngleStep)
+                    for (var z = -RefineCenterRadius; z <= RefineCenterRadius; z += FineCenterStep)
                     {
-                        var candidate = Evaluate(planet, center, seed.Yaw + offset, nearby, targetGroup,
-                            targetType, player.position, maxDistanceSquared);
-                        if (candidate != null) all.Add(candidate);
+                        var centerDirection = (seed.FieldCenter + right * x + forward * z).normalized;
+                        var center = centerDirection * 200f;
+                        for (var offset = -RefineAngleRadius; offset <= RefineAngleRadius; offset += FineAngleStep)
+                        {
+                            var candidate = Evaluate(planet, center, seed.Yaw + offset, nearby, targetGroup,
+                                targetType, player.position, maxDistanceSquared);
+                            if (candidate != null) all.Add(candidate);
+                        }
                     }
-                }
             }
 
             all.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
@@ -1211,17 +1350,17 @@ namespace AutoPlaceMiner
                 foreach (var seed in extendedSeeds)
                 {
                     for (var x = -ExtendedCenterRadius; x <= ExtendedCenterRadius; x += ExtendedCenterStep)
-                    for (var z = -ExtendedCenterRadius; z <= ExtendedCenterRadius; z += ExtendedCenterStep)
-                    {
-                        var centerDirection = (seed.FieldCenter + right * x + forward * z).normalized;
-                        var center = centerDirection * 200f;
-                        for (var offset = -ExtendedAngleRadius; offset <= ExtendedAngleRadius; offset += ExtendedAngleStep)
+                        for (var z = -ExtendedCenterRadius; z <= ExtendedCenterRadius; z += ExtendedCenterStep)
                         {
-                            var candidate = Evaluate(planet, center, seed.Yaw + offset, nearby, targetGroup,
-                                targetType, player.position, maxDistanceSquared);
-                            if (candidate != null) all.Add(candidate);
+                            var centerDirection = (seed.FieldCenter + right * x + forward * z).normalized;
+                            var center = centerDirection * 200f;
+                            for (var offset = -ExtendedAngleRadius; offset <= ExtendedAngleRadius; offset += ExtendedAngleStep)
+                            {
+                                var candidate = Evaluate(planet, center, seed.Yaw + offset, nearby, targetGroup,
+                                    targetType, player.position, maxDistanceSquared);
+                                if (candidate != null) all.Add(candidate);
+                            }
                         }
-                    }
                 }
 
                 all.Sort((a, b) => Compare(a, b, currentPosition, currentYaw));
@@ -1267,20 +1406,32 @@ namespace AutoPlaceMiner
 
             if (mixed || targetCount == 0) return null;
 
-            // 大型采矿机与手动建造一致：落点固定在水平面高度，由游戏在建造时
-            // 下挖高地并返还沙土。不能使用高地地形的 QueryModifiedHeight，否则地形
-            // 下挖后预建造矿机会悬浮在原高度。
-            var position = positionDirection * (planet.realRadius + 0.2f);
+            // 原生校验要使用手动预览所在的地形高度；否则高地会被误判 NeedGround
+            // 并被迫自动地基。最终预建造位置再放到海平面，让游戏下挖地形。
+            var position = positionDirection * QueryHeight(planet, positionDirection, planet.realRadius);
+            var finalPosition = positionDirection * (planet.realRadius + 0.2f);
             if (requireBuildRange && (position - playerPosition).sqrMagnitude > maxDistanceSquared) return null;
 
             return new Candidate
             {
                 FieldCenter = fieldCenter,
                 Position = position,
+                FinalPosition = finalPosition,
                 Yaw = yaw,
                 TargetCount = targetCount,
                 TotalCount = totalCount
             };
+        }
+
+        private static float QueryHeight(PlanetData planet, Vector3 direction, float fallback)
+        {
+            if (planet?.data != null)
+            {
+                var height = planet.data.QueryModifiedHeight(direction);
+                if (height > 1f) return height + 0.1f;
+            }
+
+            return fallback + 0.1f;
         }
 
         private static List<NearbyVein> CollectNearbyVeins(PlanetFactory factory, Vector3 center, float radius,
